@@ -3,3 +3,6 @@ dist/
 frames/
 frames-2/
 .DS_Store
+index-backup.html
+script-backup.js
+script-backup.html
