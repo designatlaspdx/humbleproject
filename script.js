@@ -10,7 +10,11 @@ document.addEventListener("DOMContentLoaded", function () {
   })
 
   gsap.ticker.lagSmoothing(0);
-const FRAME_BASE_URL = "https://pub-2be5e228fbf4428aaf7de80ec0dab76f.r2.dev/frames";
+
+  const R2_FRAME_BASE_URL = "https://pub-2be5e228fbf4428aaf7de80ec0dab76f.r2.dev/frames";
+  const LOCAL_FRAME_BASE_URL = "/frames-2";
+  const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+  const FRAME_BASE_URL = isLocalHost ? LOCAL_FRAME_BASE_URL : R2_FRAME_BASE_URL;
   const nav = document.querySelector(".nav");
   const header = document.querySelector(".header");
   const heroImg = document.querySelector(".hero-img");
