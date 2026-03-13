@@ -96,7 +96,7 @@ const render = () =>{
 
 const setupScrollTrigger = () => {
     ScrollTrigger.create({
-      trigger: ".hero",
+      trigger: ".section_home-hero",
       start: "top top",
       end: `+=${window.innerHeight * 7}px`,
       pin: true,
