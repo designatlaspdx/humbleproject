@@ -15,9 +15,6 @@ document.addEventListener("DOMContentLoaded", function () {
   const LOCAL_FRAME_BASE_URL = "/frames-2";
   const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
   const FRAME_BASE_URL = isLocalHost ? LOCAL_FRAME_BASE_URL : R2_FRAME_BASE_URL;
-  const nav = document.querySelector(".nav");
-  const header = document.querySelector(".header");
-  const heroImg = document.querySelector(".hero-img");
   const canvas = document.querySelector("canvas");
 
   const context = canvas.getContext("2d");
@@ -112,60 +109,6 @@ const setupScrollTrigger = () => {
         const targetFrame = Math.round(animationProgress * (frameCount - 1));
         videoFrames.frame = targetFrame;
         render();
-
-        if (progress <= 0.1) {
-          const navProgress = progress / 0.1;
-          const opacity = 1 - navProgress;
-          gsap.set(nav, { opacity });
-        } else {
-          gsap.set(nav, { opacity: 0 });
-        }
-
-        if (progress <= 0.25) {
-          const zProgress = progress / 0.25;
-          const translateZ = zProgress * -500;
-
-          let opacity = 1;
-          if (progress >= 0.2) {
-            const fadeProgress = Math.min((progress - 0.2) / (0.25 - 0.2), 1);
-            opacity = 1 - fadeProgress;
-          }
-
-          gsap.set(header, {
-            transform: `translate(-50%, -50%) translateZ(${translateZ}px)`,
-            opacity,
-          });
-        } else {
-          gsap.set(header, { opacity: 0 });
-        }
-
-        if (progress < 0.6) {
-          gsap.set(heroImg, {
-            transform: "translateZ(1000px)",
-            opacity: 0,
-          });
-        } else if (progress >= 0.6 && progress <= 0.9) {
-          const imgProgress = (progress - 0.6) / (0.9 - 0.6);
-          const translateZ = 1000 - imgProgress * 1000;
-
-          let opacity = 0;
-          if (progress <= 0.8) {
-            const opacityProgress = (progress - 0.6) / (0.8 - 0.6);
-            opacity = opacityProgress;
-          } else {
-            opacity = 1;
-          }
-
-          gsap.set(heroImg, {
-            transform: `translateZ(${translateZ}px)`,
-            opacity,
-          });
-        } else {
-          gsap.set(heroImg, {
-            transform: "translateZ(0px)",
-            opacity: 1,
-          });
-        }
       },
     });
   }; // End ScrollTrigger.create
