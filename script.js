@@ -4,9 +4,9 @@ document.addEventListener("DOMContentLoaded", function () {
   const lenis = new Lenis();
 
   const LOADER_MIN_VISIBLE_MS = 2000;
-  const LOADER_MAX_WAIT_MS = 3000;
+  const LOADER_MAX_WAIT_MS = 4500;
   const LOADER_HIDE_ANIMATION_MS = 700;
-  const LOADER_STABILITY_WINDOW_MS = 350;
+  const LOADER_STABILITY_WINDOW_MS = 500;
   const LOADER_STABILITY_RECHECK_MS = 80;
   const LOADER_FORCE_HIDE_AFTER_MS = 4500;
   const loaderShownAt = performance.now();
@@ -15,7 +15,11 @@ document.addEventListener("DOMContentLoaded", function () {
   let loaderStabilityTimer = null;
   let canvasControlsLoaderReady = false;
   let loaderHidden = false;
+  let loaderReleaseFinalized = false;
+  let loaderPreReleaseSyncScheduled = false;
   let pageLoaded = document.readyState === "complete";
+  let lenisStarted = false;
+  let hasRunPostLoadLenisSync = false;
   let keepTopRafId = null;
 
   // Public loader readiness signal for other scripts on this page load.
@@ -135,8 +139,17 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const maybeStartLenis = () => {
-    if (!loaderHidden || !pageLoaded) return;
-    lenis.start();
+    if (!loaderHidden) return;
+
+    // Start Lenis as soon as loader is hidden so wheel/touch input works immediately.
+    if (!lenisStarted) {
+      lenis.start();
+      lenisStarted = true;
+    }
+
+    // Run costly measurement sync pipeline once full page load has completed.
+    if (!pageLoaded || hasRunPostLoadLenisSync) return;
+    hasRunPostLoadLenisSync = true;
     startLenisAfterLoad();
   };
 
@@ -162,9 +175,13 @@ document.addEventListener("DOMContentLoaded", function () {
     loader.classList.add("is-hiding");
     loader.style.pointerEvents = "none";
 
-    setTimeout(() => {
+    const finalizeLoaderRelease = () => {
+      if (loaderReleaseFinalized) return;
+      loaderReleaseFinalized = true;
+
       loader.style.display = "none";
       loaderHidden = true;
+
       if (loaderStabilityTimer) {
         clearTimeout(loaderStabilityTimer);
         loaderStabilityTimer = null;
@@ -173,11 +190,44 @@ document.addEventListener("DOMContentLoaded", function () {
         clearTimeout(loaderMinWaitTimer);
         loaderMinWaitTimer = null;
       }
-      window.loaderIsReady = true;
-      window.dispatchEvent(new CustomEvent("loaderReady"));
+
+      // Always release native input lock before any custom event handlers run.
       unbindLoaderTopLock();
-      maybeStartLenis();
+
+      try {
+        maybeStartLenis();
+      } catch (err) {
+        console.error("Failed to start Lenis after loader release", err);
+      }
+
+      window.loaderIsReady = true;
+
+      try {
+        window.dispatchEvent(new CustomEvent("loaderReady"));
+      } catch (err) {
+        console.error("loaderReady listener failed", err);
+      }
+    };
+
+    setTimeout(() => {
+      finalizeLoaderRelease();
     }, LOADER_HIDE_ANIMATION_MS);
+  };
+
+  const runPreReleaseSyncThenHideLoader = (label) => {
+    if (loaderPreReleaseSyncScheduled || loaderReleaseFinalized || loaderHidden) {
+      return;
+    }
+
+    loaderPreReleaseSyncScheduled = true;
+    syncLenisAndScrollTrigger(label, { force: true });
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        loaderPreReleaseSyncScheduled = false;
+        hideLoader();
+      });
+    });
   };
 
   const tryHideLoader = () => {
@@ -208,7 +258,9 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
 
-    hideLoader();
+    runPreReleaseSyncThenHideLoader(
+      forceHide ? "pre-release-force-hide" : "pre-release-ready"
+    );
   };
 
   const markLoaderReady = () => {
