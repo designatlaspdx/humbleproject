@@ -1597,19 +1597,153 @@ document.addEventListener("DOMContentLoaded", function () {
     window.dispatchEvent(new Event("resize"));
   });
 
-  // If main content height changes after load, re-sync once per frame.
-  const mainWrapper = document.querySelector(".main-wrapper");
-  if (mainWrapper && typeof ResizeObserver !== "undefined") {
-    const ro = new ResizeObserver(() => {
-      syncLenisAndScrollTrigger("main-wrapper-resize");
-    });
-    ro.observe(mainWrapper);
+  // Reusable height observer guardrail:
+  // mark any dynamic wrapper with [data-height-observe] or [height-observer].
+  const HEIGHT_OBSERVER_SELECTOR = "[data-height-observe], [height-observer]";
+  const HEIGHT_OBSERVER_DEBOUNCE_MS = 140;
+  let observedHeightSyncTimer = null;
 
-    // Keep observer during initial load period where first-load mismatches occur.
-    setTimeout(() => {
-      ro.disconnect();
-    }, 10000);
+  const scheduleObservedHeightSync = (label, options = {}) => {
+    const {
+      force = false,
+      delay = HEIGHT_OBSERVER_DEBOUNCE_MS,
+    } = options;
+
+    if (observedHeightSyncTimer) {
+      clearTimeout(observedHeightSyncTimer);
+    }
+
+    observedHeightSyncTimer = setTimeout(() => {
+      observedHeightSyncTimer = null;
+      syncLenisAndScrollTrigger(label, { force });
+    }, delay);
+  };
+
+  let heightResizeObserver = null;
+  const observedHeightTargets = new Set();
+
+  const observeHeightTarget = (target) => {
+    if (!(target instanceof Element)) return;
+    if (!heightResizeObserver) return;
+    if (observedHeightTargets.has(target)) return;
+
+    observedHeightTargets.add(target);
+    heightResizeObserver.observe(target);
+  };
+
+  const scanAndObserveHeightTargets = (root = document) => {
+    if (!heightResizeObserver) return 0;
+
+    let observedCount = 0;
+
+    if (root instanceof Element && root.matches(HEIGHT_OBSERVER_SELECTOR)) {
+      observeHeightTarget(root);
+      observedCount += 1;
+    }
+
+    if (typeof root.querySelectorAll !== "function") {
+      return observedCount;
+    }
+
+    root.querySelectorAll(HEIGHT_OBSERVER_SELECTOR).forEach((el) => {
+      if (observedHeightTargets.has(el)) return;
+      observeHeightTarget(el);
+      observedCount += 1;
+    });
+
+    return observedCount;
+  };
+
+  if (typeof ResizeObserver !== "undefined") {
+    heightResizeObserver = new ResizeObserver(() => {
+      scheduleObservedHeightSync("height-observer-resize");
+    });
+
+    // Always observe page-wide wrapper as baseline height signal.
+    const mainWrapper = document.querySelector(".main-wrapper");
+    if (mainWrapper) {
+      observeHeightTarget(mainWrapper);
+    } else if (document.body) {
+      // Fallback if main wrapper is not present on this page.
+      observeHeightTarget(document.body);
+    }
+
+    scanAndObserveHeightTargets(document);
+
+    // Watch for late-mounted [data-height-observe]/[height-observer] nodes.
+    if (typeof MutationObserver !== "undefined") {
+      const heightObserverMutation = new MutationObserver((mutations) => {
+        let shouldForceSync = false;
+
+        mutations.forEach((mutation) => {
+          if (mutation.type === "attributes") {
+            const target = mutation.target;
+            if (
+              target instanceof Element &&
+              target.matches(HEIGHT_OBSERVER_SELECTOR)
+            ) {
+              observeHeightTarget(target);
+              shouldForceSync = true;
+            }
+            return;
+          }
+
+          if (mutation.type !== "childList") return;
+          mutation.addedNodes.forEach((node) => {
+            if (!(node instanceof Element)) return;
+            if (scanAndObserveHeightTargets(node) > 0) {
+              shouldForceSync = true;
+            }
+          });
+        });
+
+        if (shouldForceSync) {
+          scheduleObservedHeightSync("height-observer-target-added", {
+            force: true,
+            delay: 60,
+          });
+        }
+      });
+
+      if (document.body) {
+        heightObserverMutation.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["data-height-observe", "height-observer"],
+        });
+      }
+    }
   }
+
+  // FinSweet guardrail: if cmsload exists, sync after render batches.
+  window.fsAttributes = window.fsAttributes || [];
+  window.fsAttributes.push([
+    "cmsload",
+    (cmsLoadInstances) => {
+      scheduleObservedHeightSync("cmsload-init", { force: true, delay: 0 });
+
+      if (!Array.isArray(cmsLoadInstances)) return;
+
+      cmsLoadInstances.forEach((instance, index) => {
+        if (!instance || typeof instance.on !== "function") return;
+
+        instance.on("renderitems", () => {
+          scheduleObservedHeightSync(`cmsload-renderitems-${index}`, {
+            force: true,
+            delay: 60,
+          });
+
+          // One delayed pass catches late image/layout growth inside new items.
+          setTimeout(() => {
+            scheduleObservedHeightSync(`cmsload-renderitems-late-${index}`, {
+              force: true,
+            });
+          }, 260);
+        });
+      });
+    },
+  ]);
 });
 
 // ========================================================
@@ -1789,7 +1923,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const hideNav = () => {
       if (isHidden) return;
-      navBar.style.transform = "translateY(-100%)";
+      navBar.style.transform = "translateY(-180%)";
       isHidden = true;
     };
 
