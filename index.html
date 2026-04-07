@@ -10,6 +10,18 @@
     <link rel="stylesheet" href="/styles.css" class="rel">
 </head>
 <body>
+    <!-- Loading screen - hidden when canvas is ready -->
+    <div id="loader" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg, #fefbf4); display: flex; align-items: center; justify-content: center; z-index: 9999;">
+        <div style="text-align: center;">
+            <div style="width: 40px; height: 40px; border: 3px solid #241910; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+            <p style="margin-top: 1rem; color: #241910; font-family: 'Host Grotesk'; font-size: 0.9rem;">Loading...</p>
+        </div>
+        <style>
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
+        </style>
+    </div>
     <nav>
         <div class="nav-links">
             <a href="#" class="">Overview</a>
@@ -55,7 +67,44 @@
  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js"></script>
  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/ScrollTrigger.min.js"></script>
  <script src="https://unpkg.com/lenis@1.3.11/dist/lenis.min.js"></script>
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.7/SplitText.min.js"></script>
  <script src="/script.js"></script>
+ <script src="/split-text.js"></script>
+
+
+
+ <div class="home_pin-wrapper">
+    <div class="pin-spacer">
+        <div class="section_home-hero" split-text-component> Canvas, home_hero_component etc located here</div>
+        <div class="section_home-intro"><div class="padding-global"><div class="container-large"><div split-text-component="" class="home_intro_component"><div gsap="trigger" class="split-text-wrapper"><h2 split-line="" class="heading-style-h2" aria-label="The first of its kind. A hauler that thinks like a human. Purpose-built for safe, efficient, low-cost operations."><div class="split-line" aria-hidden="true" style="position: relative; display: block; text-align: center;"><span class="line-outline" aria-hidden="true">The first of its kind. A hauler that thinks </span><span class="line-fill" style="clip-path: inset(0px 100% 0px 0px);">The first of its kind. A hauler that thinks </span></div><div class="split-line" aria-hidden="true" style="position: relative; display: block; text-align: center;"><span class="line-outline" aria-hidden="true">like a human. Purpose-built for safe, </span><span class="line-fill" style="clip-path: inset(0px 100% 0px 0px);">like a human. Purpose-built for safe, </span></div><div class="split-line" aria-hidden="true" style="position: relative; display: block; text-align: center;"><span class="line-outline" aria-hidden="true">efficient, low-cost operations.</span><span class="line-fill" style="clip-path: inset(0px 100% 0px 0px);">efficient, low-cost operations.</span></div></h2></div><div class="w-embed"><style>
+/* SplitText adds .split-line per line */
+.split-line {
+  position: relative;
+  overflow: hidden;
+}
+
+.split-line .line-outline {
+  position: absolute;
+  inset: 0;
+  color: #858484; /* hide fill color */
+  opacity: 0.5; /* tweak ghost strength */
+  pointer-events: none;
+  /* crisp outline (Blink/WebKit) */
+  -webkit-text-stroke: 0.75px currentColor;
+  text-stroke: 0.75px currentColor;
+
+}
+
+/* Fill layer (animated with clip-path) */
+.split-line .line-fill {
+  position: relative; /* stays in flow to keep line height */
+  display: inline-block; /* clip-path needs a box */
+  will-change: clip-path;
+}
+</style></div></div></div></div></div>
+
+    </div>
+ </div>
 </body>
 
 </html>

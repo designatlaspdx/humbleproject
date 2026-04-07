@@ -1,25 +1,18 @@
 document.addEventListener("DOMContentLoaded", function () {
   gsap.registerPlugin(ScrollTrigger);
+  ScrollTrigger.config({ ignoreMobileResize: true });
 
   const lenis = new Lenis();
 
   const LOADER_MIN_VISIBLE_MS = 2000;
-  const LOADER_MAX_WAIT_MS = 4500;
+  const LOADER_MAX_WAIT_MS = 3000;
   const LOADER_HIDE_ANIMATION_MS = 700;
-  const LOADER_STABILITY_WINDOW_MS = 500;
-  const LOADER_STABILITY_RECHECK_MS = 80;
-  const LOADER_FORCE_HIDE_AFTER_MS = 4500;
   const loaderShownAt = performance.now();
   let loaderPageReady = false;
   let loaderMinWaitTimer = null;
-  let loaderStabilityTimer = null;
   let canvasControlsLoaderReady = false;
   let loaderHidden = false;
-  let loaderReleaseFinalized = false;
-  let loaderPreReleaseSyncScheduled = false;
   let pageLoaded = document.readyState === "complete";
-  let lenisStarted = false;
-  let hasRunPostLoadLenisSync = false;
   let keepTopRafId = null;
 
   // Public loader readiness signal for other scripts on this page load.
@@ -124,8 +117,8 @@ document.addEventListener("DOMContentLoaded", function () {
       syncLenisAndScrollTrigger("load+500ms");
     }, 500);
 
-    // Keep only one late pass after loader release to reduce mid-scroll refresh churn.
-    [1200].forEach((delay) => {
+    // Catch late layout growth (fonts, async media, component hydration).
+    [1200, 2200, 3500].forEach((delay) => {
       setTimeout(() => {
         syncLenisAndScrollTrigger(`post-load-${delay}ms`);
       }, delay);
@@ -139,17 +132,8 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const maybeStartLenis = () => {
-    if (!loaderHidden) return;
-
-    // Start Lenis as soon as loader is hidden so wheel/touch input works immediately.
-    if (!lenisStarted) {
-      lenis.start();
-      lenisStarted = true;
-    }
-
-    // Run costly measurement sync pipeline once full page load has completed.
-    if (!pageLoaded || hasRunPostLoadLenisSync) return;
-    hasRunPostLoadLenisSync = true;
+    if (!loaderHidden || !pageLoaded) return;
+    lenis.start();
     startLenisAfterLoad();
   };
 
@@ -175,59 +159,14 @@ document.addEventListener("DOMContentLoaded", function () {
     loader.classList.add("is-hiding");
     loader.style.pointerEvents = "none";
 
-    const finalizeLoaderRelease = () => {
-      if (loaderReleaseFinalized) return;
-      loaderReleaseFinalized = true;
-
+    setTimeout(() => {
       loader.style.display = "none";
       loaderHidden = true;
-
-      if (loaderStabilityTimer) {
-        clearTimeout(loaderStabilityTimer);
-        loaderStabilityTimer = null;
-      }
-      if (loaderMinWaitTimer) {
-        clearTimeout(loaderMinWaitTimer);
-        loaderMinWaitTimer = null;
-      }
-
-      // Always release native input lock before any custom event handlers run.
-      unbindLoaderTopLock();
-
-      try {
-        maybeStartLenis();
-      } catch (err) {
-        console.error("Failed to start Lenis after loader release", err);
-      }
-
       window.loaderIsReady = true;
-
-      try {
-        window.dispatchEvent(new CustomEvent("loaderReady"));
-      } catch (err) {
-        console.error("loaderReady listener failed", err);
-      }
-    };
-
-    setTimeout(() => {
-      finalizeLoaderRelease();
+      window.dispatchEvent(new CustomEvent("loaderReady"));
+      unbindLoaderTopLock();
+      maybeStartLenis();
     }, LOADER_HIDE_ANIMATION_MS);
-  };
-
-  const runPreReleaseSyncThenHideLoader = (label) => {
-    if (loaderPreReleaseSyncScheduled || loaderReleaseFinalized || loaderHidden) {
-      return;
-    }
-
-    loaderPreReleaseSyncScheduled = true;
-    syncLenisAndScrollTrigger(label, { force: true });
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        loaderPreReleaseSyncScheduled = false;
-        hideLoader();
-      });
-    });
   };
 
   const tryHideLoader = () => {
@@ -236,31 +175,18 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const elapsed = performance.now() - loaderShownAt;
     const minDurationMet = elapsed >= LOADER_MIN_VISIBLE_MS;
-    const stableForMs = performance.now() - lastDocHeightChangeAt;
-    const stabilityMet = stableForMs >= LOADER_STABILITY_WINDOW_MS;
-    const forceHide = elapsed >= LOADER_FORCE_HIDE_AFTER_MS;
 
-    if (!forceHide && (!loaderPageReady || !minDurationMet || !stabilityMet)) {
-      const untilMin = Math.max(0, LOADER_MIN_VISIBLE_MS - elapsed);
-      const untilStable = Math.max(0, LOADER_STABILITY_WINDOW_MS - stableForMs);
-      const delay = Math.max(
-        LOADER_STABILITY_RECHECK_MS,
-        Math.max(untilMin, untilStable)
-      );
-
-      if (loaderMinWaitTimer) {
-        clearTimeout(loaderMinWaitTimer);
-      }
+    if (!loaderPageReady || !minDurationMet) {
+      const remaining = Math.max(0, LOADER_MIN_VISIBLE_MS - elapsed);
+      if (loaderMinWaitTimer) clearTimeout(loaderMinWaitTimer);
       loaderMinWaitTimer = setTimeout(() => {
         loaderMinWaitTimer = null;
         tryHideLoader();
-      }, delay);
+      }, remaining);
       return;
     }
 
-    runPreReleaseSyncThenHideLoader(
-      forceHide ? "pre-release-force-hide" : "pre-release-ready"
-    );
+    hideLoader();
   };
 
   const markLoaderReady = () => {
@@ -283,16 +209,6 @@ document.addEventListener("DOMContentLoaded", function () {
     );
   };
 
-  let lastObservedDocHeight = getDocHeight();
-  let lastDocHeightChangeAt = performance.now();
-
-  const updateHeightStabilityState = (height) => {
-    if (height !== lastObservedDocHeight) {
-      lastObservedDocHeight = height;
-      lastDocHeightChangeAt = performance.now();
-    }
-  };
-
   let lastSyncedDocHeight = 0;
   let syncQueued = false;
 
@@ -305,7 +221,6 @@ document.addEventListener("DOMContentLoaded", function () {
       syncQueued = false;
 
       const currentHeight = getDocHeight();
-      updateHeightStabilityState(currentHeight);
       const changed = currentHeight !== lastSyncedDocHeight;
       if (!force && !changed) {
         return;
@@ -318,23 +233,6 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   };
   window.__syncLenisAndScrollTrigger = syncLenisAndScrollTrigger;
-
-  // Run multi-pass remeasurement while loader keeps users at the top.
-  [250, 700, 1200, 1700].forEach((delay) => {
-    setTimeout(() => {
-      syncLenisAndScrollTrigger(`pre-loader-hide-${delay}ms`, {
-        force: delay >= 1200,
-      });
-    }, delay);
-  });
-
-  if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => {
-      syncLenisAndScrollTrigger("pre-loader-hide-fonts-ready", {
-        force: true,
-      });
-    });
-  }
 
   // Start Lenis after full page load so initial limits are calculated from settled layout.
   lenis.stop();
@@ -424,7 +322,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // ========================================================
   (function setupCanvasHeroAnimation() {
     const R2_FRAME_BASE_URL =
-      "https://pub-5044a6c9a7e949ceb5c5e1898014171f.r2.dev/humble-hero";
+      "https://pub-2be5e228fbf4428aaf7de80ec0dab76f.r2.dev/humble-hero";
     const LOCAL_FRAME_BASE_URL = "/frames-2";
     const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(
       window.location.hostname
@@ -434,37 +332,79 @@ document.addEventListener("DOMContentLoaded", function () {
       : R2_FRAME_BASE_URL;
     const pinWrapper = document.querySelector(".home_pin-wrapper");
     if (!pinWrapper) return;
+    const canvasSection =
+      pinWrapper.closest(".section_home-hero") ||
+      document.querySelector(".section_home-hero");
 
     mmRun(pinWrapper, () => {
       const canvas = document.querySelector("canvas");
       if (!canvas) return;
 
+      let stableCanvasViewportHeight = window.innerHeight;
+      let lastViewportWidth = window.innerWidth;
+      let lastOrientation = window.matchMedia("(orientation: portrait)").matches
+        ? "portrait"
+        : "landscape";
+
+      const getStableCanvasViewportHeight = () => {
+        return stableCanvasViewportHeight;
+      };
+
+      const getCanvasScrollDistance = () => {
+        return getStableCanvasViewportHeight() * getCanvasScrollMultiplier();
+      };
+
+      const syncCanvasSpacerHeight = () => {
+        if (!canvasSection) return;
+
+        const spacers = canvasSection.querySelectorAll(".spacer");
+        if (!spacers.length) return;
+
+        const nextHeight = `${getCanvasScrollDistance()}px`;
+        spacers.forEach((spacer) => {
+          spacer.style.height = nextHeight;
+        });
+      };
+
+      const updateStableCanvasViewport = () => {
+        const nextWidth = window.innerWidth;
+        const nextHeight = window.innerHeight;
+        const nextOrientation = window.matchMedia("(orientation: portrait)")
+          .matches
+          ? "portrait"
+          : "landscape";
+
+        const widthChanged = nextWidth !== lastViewportWidth;
+        const orientationChanged = nextOrientation !== lastOrientation;
+
+        if (!widthChanged && !orientationChanged) {
+          return false;
+        }
+
+        lastViewportWidth = nextWidth;
+        lastOrientation = nextOrientation;
+        stableCanvasViewportHeight = nextHeight;
+        return true;
+      };
+
       const context = canvas.getContext("2d");
       if (!context) return;
       canvasControlsLoaderReady = true;
 
-      let lastCachedHeight = 0;
-      let lastCachedWidth = 0;
-
       const setCanvasSize = () => {
         const pixelRatio = window.devicePixelRatio || 1;
         const availableWidth = document.documentElement.clientWidth;
-        const availableHeight = window.innerHeight * pixelRatio;
+        const stableHeight = getStableCanvasViewportHeight();
+        const availableHeight = stableHeight * pixelRatio;
+        canvas.width = availableWidth * pixelRatio;
+        canvas.height = availableHeight;
+        canvas.style.width = availableWidth + "px";
+        canvas.style.height = stableHeight + "px";
 
-        // Only update if dimensions actually changed
-        if (availableWidth !== lastCachedWidth || availableHeight !== lastCachedHeight) {
-          canvas.width = availableWidth * pixelRatio;
-          canvas.height = availableHeight;
-          canvas.style.width = availableWidth + "px";
-          canvas.style.height = window.innerHeight + "px";
-
-          context.scale(pixelRatio, pixelRatio);
-
-          lastCachedWidth = availableWidth;
-          lastCachedHeight = availableHeight;
-        }
+        context.scale(pixelRatio, pixelRatio);
       };
       setCanvasSize();
+      syncCanvasSpacerHeight();
 
       const frameCount = 313;
       const currentFrame = (index) => {
@@ -505,7 +445,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
       const render = () => {
         const canvasWidth = document.documentElement.clientWidth;
-        const canvasHeight = window.innerHeight;
+        const canvasHeight = getStableCanvasViewportHeight();
 
         context.clearRect(0, 0, canvasWidth, canvasHeight);
 
@@ -536,8 +476,7 @@ document.addEventListener("DOMContentLoaded", function () {
         ScrollTrigger.create({
           trigger: pinWrapper,
           start: "top top",
-          end: () =>
-            `+=${window.innerHeight * getCanvasScrollMultiplier()}px`,
+          end: () => `+=${getCanvasScrollDistance()}px`,
           invalidateOnRefresh: true,
           //  pin: true,
           //  pinSpacing: true,
@@ -563,7 +502,13 @@ document.addEventListener("DOMContentLoaded", function () {
       };
 
       window.addEventListener("resize", () => {
+        if (!updateStableCanvasViewport()) {
+          render();
+          return;
+        }
+
         setCanvasSize();
+        syncCanvasSpacerHeight();
         render();
         ScrollTrigger.refresh();
       });
@@ -888,59 +833,6 @@ document.addEventListener("DOMContentLoaded", function () {
   (function setupTabAccordionAnimation() {
     const initializedAttr = "data-gsap-tab-accordion-init";
 
-    // Global listener for Swiper events - attach ONCE, outside mmRun guard
-    // so it always listens regardless of media query or component initialization state
-    const handleHomeStatsSwiperChangeGlobal = (event) => {
-      const detail = event.detail || {};
-      const swiperEl = detail.swiperEl;
-      if (!swiperEl) return;
-
-      // Find the matching tab-accordion component for this swiper event
-      const swiperOwner = swiperEl.closest("[data-gsap='tab-accordion']");
-      if (!swiperOwner) {
-        const swiperHomeStatsRoot = swiperEl.closest(".home_stats_main");
-        if (!swiperHomeStatsRoot) return;
-      }
-
-      // Dispatch to all matching components
-      const tabComponents = document.querySelectorAll("[data-gsap='tab-accordion']");
-      tabComponents.forEach((component) => {
-        const componentEl = component;
-        const componentVisuals = componentEl.querySelectorAll("[data-gsap-role='visual']");
-        if (!componentVisuals.length) return;
-
-        const componentHomeStatsRoot = componentEl.closest(".home_stats_main");
-
-        // Check if this component owns the swiper
-        if (swiperOwner && swiperOwner === componentEl) {
-          // Direct match
-        } else if (componentHomeStatsRoot && swiperHomeStatsRoot && componentHomeStatsRoot === swiperHomeStatsRoot) {
-          // Same home_stats_main container
-        } else if (componentEl.contains(swiperEl)) {
-          // Swiper is inside component
-        } else {
-          return; // Skip - doesn't own this swiper
-        }
-
-        const rawIndex = Number.parseInt(`${detail.realIndex ?? ""}`, 10);
-        if (!Number.isFinite(rawIndex)) return;
-
-        const zone = Math.max(0, Math.min(componentVisuals.length - 1, rawIndex));
-        
-        // Update this component's visuals
-        componentVisuals.forEach((visual, index) => {
-          gsap.to(visual, {
-            opacity: index === zone ? 1 : 0,
-            duration: 0.3,
-            ease: "power1.out",
-            overwrite: "auto",
-          });
-        });
-      });
-    };
-
-    window.addEventListener("homeStatsSwiperChange", handleHomeStatsSwiperChangeGlobal);
-
     const initTabAccordionAnimation = () => {
       const tabComponents = document.querySelectorAll(
         "[data-gsap='tab-accordion']"
@@ -969,30 +861,10 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
           }
 
-          const tabVisuals = component.querySelectorAll(
-            "[data-gsap-role='visual']"
-          );
-          console.log("[tab-accordion] visual selector:", "[data-gsap-role='visual']", "count:", tabVisuals.length);
-          const homeStatsSwiperEl = component.querySelector(
-            ".swiper.is-home-stats"
-          );
-          if (!homeStatsSwiperEl) {
-            console.log(
-              "[tab-accordion] swiper element not found inside component"
-            );
-          }
-
-          const componentHomeStatsRoot = component.closest(".home_stats_main");
-
           const totalItems = tabItems.length;
           const scrollDistancePerZone = 800;
           const scrollDistance = totalItems * scrollDistancePerZone;
           let currentZone = -1;
-          let boundSwiperInstance = null;
-          let swiperBindRetryTimer = null;
-          let swiperBindRetries = 0;
-          const MAX_SWIPER_BIND_RETRIES = 40;
-          const SWIPER_BIND_RETRY_MS = 250;
 
           const scrollTriggerElement = component.matches(
             "[data-gsap-role='trigger']"
@@ -1159,129 +1031,6 @@ document.addEventListener("DOMContentLoaded", function () {
             });
           };
 
-          const setVisualZone = (zone, immediate = false) => {
-            if (!tabVisuals.length) return;
-
-            tabVisuals.forEach((visual, index) => {
-              const animationMethod = immediate ? gsap.set : gsap.to;
-              animationMethod(visual, {
-                opacity: index === zone ? 1 : 0,
-                duration: 0.3,
-                ease: "power1.out",
-                overwrite: "auto",
-              });
-            });
-          };
-
-          const getActiveSwiperSlideIndex = () => {
-            if (!homeStatsSwiperEl || !tabVisuals.length) return null;
-            if (homeStatsSwiperEl.offsetParent === null) return null;
-
-            const activeSlide = homeStatsSwiperEl.querySelector(
-              ".swiper-slide-active[data-swiper-slide-index]"
-            );
-            if (!activeSlide) return null;
-
-            const indexAttr = activeSlide.getAttribute(
-              "data-swiper-slide-index"
-            );
-            const parsed = Number.parseInt(indexAttr || "", 10);
-            if (!Number.isFinite(parsed)) return null;
-
-            return Math.max(0, Math.min(tabVisuals.length - 1, parsed));
-          };
-
-          const syncVisualsFromCurrentMode = (immediate = false) => {
-            const swiperZone = getActiveSwiperSlideIndex();
-            if (swiperZone !== null) {
-              console.log("[tab-accordion] mode=swiper activeIndex=", swiperZone);
-              setVisualZone(swiperZone, immediate);
-              return;
-            }
-
-            const fallbackZone = currentZone >= 0 ? currentZone : 0;
-            console.log("[tab-accordion] mode=accordion zone=", fallbackZone);
-            setVisualZone(fallbackZone, immediate);
-          };
-
-          const handleSwiperVisualSyncEvent = (eventName) => {
-            const activeIndex = getActiveSwiperSlideIndex();
-            console.log(
-              "[tab-accordion] swiper event:",
-              eventName,
-              "activeIndex:",
-              activeIndex
-            );
-            syncVisualsFromCurrentMode(false);
-          };
-
-          const bindSwiperVisualSync = () => {
-            const swiperInstance = homeStatsSwiperEl?.swiper;
-            if (!swiperInstance) {
-              console.log("[tab-accordion] swiper instance not ready yet");
-              return false;
-            }
-            if (swiperInstance === boundSwiperInstance) return true;
-
-            if (boundSwiperInstance) {
-              boundSwiperInstance.off("init", boundSwiperInstance.__tabAccordionOnInit);
-              boundSwiperInstance.off(
-                "slideChange",
-                boundSwiperInstance.__tabAccordionOnSlideChange
-              );
-              boundSwiperInstance.off(
-                "transitionEnd",
-                boundSwiperInstance.__tabAccordionOnTransitionEnd
-              );
-            }
-
-            boundSwiperInstance = swiperInstance;
-            boundSwiperInstance.__tabAccordionOnInit = () =>
-              handleSwiperVisualSyncEvent("init");
-            boundSwiperInstance.__tabAccordionOnSlideChange = () =>
-              handleSwiperVisualSyncEvent("slideChange");
-            boundSwiperInstance.__tabAccordionOnTransitionEnd = () =>
-              handleSwiperVisualSyncEvent("transitionEnd");
-
-            boundSwiperInstance.on(
-              "init",
-              boundSwiperInstance.__tabAccordionOnInit
-            );
-            boundSwiperInstance.on(
-              "slideChange",
-              boundSwiperInstance.__tabAccordionOnSlideChange
-            );
-            boundSwiperInstance.on(
-              "transitionEnd",
-              boundSwiperInstance.__tabAccordionOnTransitionEnd
-            );
-
-            console.log("[tab-accordion] swiper visual sync bound");
-            syncVisualsFromCurrentMode(true);
-            return true;
-          };
-
-          const startSwiperBindRetries = () => {
-            if (swiperBindRetryTimer || !homeStatsSwiperEl) return;
-
-            swiperBindRetries = 0;
-            swiperBindRetryTimer = setInterval(() => {
-              swiperBindRetries += 1;
-              const bound = bindSwiperVisualSync();
-
-              if (bound || swiperBindRetries >= MAX_SWIPER_BIND_RETRIES) {
-                clearInterval(swiperBindRetryTimer);
-                swiperBindRetryTimer = null;
-
-                if (!bound) {
-                  console.log(
-                    "[tab-accordion] failed to bind swiper visual sync after retries"
-                  );
-                }
-              }
-            }, SWIPER_BIND_RETRY_MS);
-          };
-
           const setZone = (zone, immediate = false) => {
             if (zone === currentZone) return;
 
@@ -1295,29 +1044,13 @@ document.addEventListener("DOMContentLoaded", function () {
             if (tabItems[zone]) {
               openTab(tabItems[zone], immediate);
             }
-
-            setVisualZone(zone, immediate);
           };
 
           tabItems.forEach((item) => {
             setTabClosedState(item);
           });
 
-          if (tabVisuals.length) {
-            gsap.set(tabVisuals, { opacity: 0, willChange: "opacity" });
-          }
-
           setZone(0, true);
-          bindSwiperVisualSync();
-          setTimeout(bindSwiperVisualSync, 0);
-          setTimeout(bindSwiperVisualSync, 300);
-          startSwiperBindRetries();
-
-          const handleResize = () => {
-            bindSwiperVisualSync();
-            syncVisualsFromCurrentMode(true);
-          };
-          window.addEventListener("resize", handleResize);
 
           const st = ScrollTrigger.create({
             trigger: scrollTriggerElement,
@@ -1335,31 +1068,6 @@ document.addEventListener("DOMContentLoaded", function () {
           });
 
           componentCleanups.push(() => st.kill());
-
-          componentCleanups.push(() => {
-            window.removeEventListener("resize", handleResize);
-
-            if (swiperBindRetryTimer) {
-              clearInterval(swiperBindRetryTimer);
-              swiperBindRetryTimer = null;
-            }
-
-            if (boundSwiperInstance) {
-              boundSwiperInstance.off("init", boundSwiperInstance.__tabAccordionOnInit);
-              boundSwiperInstance.off(
-                "slideChange",
-                boundSwiperInstance.__tabAccordionOnSlideChange
-              );
-              boundSwiperInstance.off(
-                "transitionEnd",
-                boundSwiperInstance.__tabAccordionOnTransitionEnd
-              );
-              delete boundSwiperInstance.__tabAccordionOnInit;
-              delete boundSwiperInstance.__tabAccordionOnSlideChange;
-              delete boundSwiperInstance.__tabAccordionOnTransitionEnd;
-              boundSwiperInstance = null;
-            }
-          });
 
           componentCleanups.push(() => {
             tabItems.forEach((item) => {
@@ -1382,12 +1090,6 @@ document.addEventListener("DOMContentLoaded", function () {
               tabTitle?.removeAttribute("style");
               tabContent?.removeAttribute("style");
             });
-
-            tabVisuals.forEach((visual) => {
-              gsap.killTweensOf(visual);
-              visual.removeAttribute("style");
-            });
-
             component.removeAttribute(initializedAttr);
           });
           return () => componentCleanups.forEach((fn) => fn());
@@ -1760,64 +1462,6 @@ document.addEventListener("DOMContentLoaded", () => {
   observer.observe(navbarHamburgerButton, {
     attributes: true,
     attributeFilter: ["class"],
-  });
-});
-
-// ========================================================
-// Navbar Auto Hide On Scroll
-// ========================================================
-
-document.addEventListener("DOMContentLoaded", () => {
-  const navBars = document.querySelectorAll("[nav-bar]");
-  if (!navBars.length) return;
-
-  navBars.forEach((navBar) => {
-    navBar.style.willChange = "transform";
-    navBar.style.transition = "transform 0.35s ease";
-
-    let lastScrollY = window.scrollY;
-    let ticking = false;
-    let isHidden = false;
-    const SCROLL_DELTA_THRESHOLD = 6;
-    const TOP_REVEAL_OFFSET = 10;
-
-    const showNav = () => {
-      if (!isHidden) return;
-      navBar.style.transform = "translateY(0)";
-      isHidden = false;
-    };
-
-    const hideNav = () => {
-      if (isHidden) return;
-      navBar.style.transform = "translateY(-100%)";
-      isHidden = true;
-    };
-
-    const updateNavState = () => {
-      const currentScrollY = window.scrollY;
-      const delta = currentScrollY - lastScrollY;
-
-      if (currentScrollY <= TOP_REVEAL_OFFSET) {
-        showNav();
-      } else if (delta > SCROLL_DELTA_THRESHOLD) {
-        hideNav();
-      } else if (delta < -SCROLL_DELTA_THRESHOLD) {
-        showNav();
-      }
-
-      lastScrollY = currentScrollY;
-      ticking = false;
-    };
-
-    window.addEventListener(
-      "scroll",
-      () => {
-        if (ticking) return;
-        ticking = true;
-        requestAnimationFrame(updateNavState);
-      },
-      { passive: true }
-    );
   });
 });
 

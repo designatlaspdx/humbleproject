@@ -3,275 +3,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const lenis = new Lenis();
 
-  const LOADER_MIN_VISIBLE_MS = 2000;
-  const LOADER_MAX_WAIT_MS = 4500;
-  const LOADER_HIDE_ANIMATION_MS = 700;
-  const LOADER_STABILITY_WINDOW_MS = 500;
-  const LOADER_STABILITY_RECHECK_MS = 80;
-  const LOADER_FORCE_HIDE_AFTER_MS = 4500;
-  const loaderShownAt = performance.now();
-  let loaderPageReady = false;
-  let loaderMinWaitTimer = null;
-  let loaderStabilityTimer = null;
-  let canvasControlsLoaderReady = false;
-  let loaderHidden = false;
-  let loaderReleaseFinalized = false;
-  let loaderPreReleaseSyncScheduled = false;
-  let pageLoaded = document.readyState === "complete";
-  let lenisStarted = false;
-  let hasRunPostLoadLenisSync = false;
-  let keepTopRafId = null;
-
-  // Public loader readiness signal for other scripts on this page load.
-  window.loaderIsReady = false;
-
-  const keepTopDuringLoader = () => {
-    if (loaderHidden) {
-      keepTopRafId = null;
-      return;
-    }
-
-    forceScrollTop();
-    lenis.scrollTo(0, { immediate: true, force: true });
-    keepTopRafId = requestAnimationFrame(keepTopDuringLoader);
-  };
-
-  const preventNativeScrollWhileLoaderVisible = (event) => {
-    if (loaderHidden) return;
-    event.preventDefault();
-    forceScrollTop();
-  };
-
-  const preventScrollKeysWhileLoaderVisible = (event) => {
-    if (loaderHidden) return;
-
-    const blockedKeys = [
-      "ArrowUp",
-      "ArrowDown",
-      "PageUp",
-      "PageDown",
-      "Home",
-      "End",
-      " ",
-    ];
-
-    if (!blockedKeys.includes(event.key)) return;
-    event.preventDefault();
-    forceScrollTop();
-  };
-
-  const enforceTopOnNativeScrollWhileLoaderVisible = () => {
-    if (loaderHidden) return;
-    if (window.scrollY !== 0 || window.pageYOffset !== 0) {
-      forceScrollTop();
-    }
-  };
-
-  const bindLoaderTopLock = () => {
-    window.addEventListener("wheel", preventNativeScrollWhileLoaderVisible, {
-      passive: false,
-    });
-    window.addEventListener(
-      "touchmove",
-      preventNativeScrollWhileLoaderVisible,
-      {
-        passive: false,
-      }
-    );
-    window.addEventListener("keydown", preventScrollKeysWhileLoaderVisible, {
-      passive: false,
-    });
-    window.addEventListener(
-      "scroll",
-      enforceTopOnNativeScrollWhileLoaderVisible,
-      {
-        passive: true,
-      }
-    );
-
-    if (keepTopRafId === null) {
-      keepTopRafId = requestAnimationFrame(keepTopDuringLoader);
-    }
-  };
-
-  const unbindLoaderTopLock = () => {
-    window.removeEventListener("wheel", preventNativeScrollWhileLoaderVisible);
-    window.removeEventListener(
-      "touchmove",
-      preventNativeScrollWhileLoaderVisible
-    );
-    window.removeEventListener("keydown", preventScrollKeysWhileLoaderVisible);
-    window.removeEventListener(
-      "scroll",
-      enforceTopOnNativeScrollWhileLoaderVisible
-    );
-
-    if (keepTopRafId !== null) {
-      cancelAnimationFrame(keepTopRafId);
-      keepTopRafId = null;
-    }
-  };
-
-  const forceScrollTop = () => {
-    window.scrollTo(0, 0);
-    document.documentElement.scrollTop = 0;
-    document.body.scrollTop = 0;
-  };
-
-  const startLenisAfterLoad = () => {
-    syncLenisAndScrollTrigger("load-start", { force: true });
-    setTimeout(() => {
-      syncLenisAndScrollTrigger("load+500ms");
-    }, 500);
-
-    // Keep only one late pass after loader release to reduce mid-scroll refresh churn.
-    [1200].forEach((delay) => {
-      setTimeout(() => {
-        syncLenisAndScrollTrigger(`post-load-${delay}ms`);
-      }, delay);
-    });
-
-    if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(() => {
-        syncLenisAndScrollTrigger("fonts-ready");
-      });
-    }
-  };
-
-  const maybeStartLenis = () => {
-    if (!loaderHidden) return;
-
-    // Start Lenis as soon as loader is hidden so wheel/touch input works immediately.
-    if (!lenisStarted) {
-      lenis.start();
-      lenisStarted = true;
-    }
-
-    // Run costly measurement sync pipeline once full page load has completed.
-    if (!pageLoaded || hasRunPostLoadLenisSync) return;
-    hasRunPostLoadLenisSync = true;
-    startLenisAfterLoad();
-  };
-
-  if ("scrollRestoration" in window.history) {
-    window.history.scrollRestoration = "manual";
-  }
-
-  forceScrollTop();
-  lenis.scrollTo(0, { immediate: true, force: true });
-  bindLoaderTopLock();
-  requestAnimationFrame(forceScrollTop);
-  window.addEventListener("load", forceScrollTop, { once: true });
-
-  const hideLoader = () => {
-    const loader = document.querySelector("[data-loader], #loader");
-    if (!loader || loader.dataset.hiding === "true") return;
-
-    // Ensure we are at top before beginning loader hide animation.
-    forceScrollTop();
-    lenis.scrollTo(0, { immediate: true, force: true });
-
-    loader.dataset.hiding = "true";
-    loader.classList.add("is-hiding");
-    loader.style.pointerEvents = "none";
-
-    const finalizeLoaderRelease = () => {
-      if (loaderReleaseFinalized) return;
-      loaderReleaseFinalized = true;
-
-      loader.style.display = "none";
-      loaderHidden = true;
-
-      if (loaderStabilityTimer) {
-        clearTimeout(loaderStabilityTimer);
-        loaderStabilityTimer = null;
-      }
-      if (loaderMinWaitTimer) {
-        clearTimeout(loaderMinWaitTimer);
-        loaderMinWaitTimer = null;
-      }
-
-      // Always release native input lock before any custom event handlers run.
-      unbindLoaderTopLock();
-
-      try {
-        maybeStartLenis();
-      } catch (err) {
-        console.error("Failed to start Lenis after loader release", err);
-      }
-
-      window.loaderIsReady = true;
-
-      try {
-        window.dispatchEvent(new CustomEvent("loaderReady"));
-      } catch (err) {
-        console.error("loaderReady listener failed", err);
-      }
-    };
-
-    setTimeout(() => {
-      finalizeLoaderRelease();
-    }, LOADER_HIDE_ANIMATION_MS);
-  };
-
-  const runPreReleaseSyncThenHideLoader = (label) => {
-    if (loaderPreReleaseSyncScheduled || loaderReleaseFinalized || loaderHidden) {
-      return;
-    }
-
-    loaderPreReleaseSyncScheduled = true;
-    syncLenisAndScrollTrigger(label, { force: true });
-
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        loaderPreReleaseSyncScheduled = false;
-        hideLoader();
-      });
-    });
-  };
-
-  const tryHideLoader = () => {
-    const loader = document.querySelector("[data-loader], #loader");
-    if (!loader || loader.dataset.hiding === "true") return;
-
-    const elapsed = performance.now() - loaderShownAt;
-    const minDurationMet = elapsed >= LOADER_MIN_VISIBLE_MS;
-    const stableForMs = performance.now() - lastDocHeightChangeAt;
-    const stabilityMet = stableForMs >= LOADER_STABILITY_WINDOW_MS;
-    const forceHide = elapsed >= LOADER_FORCE_HIDE_AFTER_MS;
-
-    if (!forceHide && (!loaderPageReady || !minDurationMet || !stabilityMet)) {
-      const untilMin = Math.max(0, LOADER_MIN_VISIBLE_MS - elapsed);
-      const untilStable = Math.max(0, LOADER_STABILITY_WINDOW_MS - stableForMs);
-      const delay = Math.max(
-        LOADER_STABILITY_RECHECK_MS,
-        Math.max(untilMin, untilStable)
-      );
-
-      if (loaderMinWaitTimer) {
-        clearTimeout(loaderMinWaitTimer);
-      }
-      loaderMinWaitTimer = setTimeout(() => {
-        loaderMinWaitTimer = null;
-        tryHideLoader();
-      }, delay);
-      return;
-    }
-
-    runPreReleaseSyncThenHideLoader(
-      forceHide ? "pre-release-force-hide" : "pre-release-ready"
-    );
-  };
-
-  const markLoaderReady = () => {
-    loaderPageReady = true;
-    tryHideLoader();
-  };
-
-  setTimeout(() => {
-    markLoaderReady();
-  }, LOADER_MAX_WAIT_MS);
-
   const getDocHeight = () => {
     const doc = document.documentElement;
     const body = document.body;
@@ -281,16 +12,6 @@ document.addEventListener("DOMContentLoaded", function () {
       body ? body.scrollHeight : 0,
       body ? body.offsetHeight : 0
     );
-  };
-
-  let lastObservedDocHeight = getDocHeight();
-  let lastDocHeightChangeAt = performance.now();
-
-  const updateHeightStabilityState = (height) => {
-    if (height !== lastObservedDocHeight) {
-      lastObservedDocHeight = height;
-      lastDocHeightChangeAt = performance.now();
-    }
   };
 
   let lastSyncedDocHeight = 0;
@@ -305,7 +26,6 @@ document.addEventListener("DOMContentLoaded", function () {
       syncQueued = false;
 
       const currentHeight = getDocHeight();
-      updateHeightStabilityState(currentHeight);
       const changed = currentHeight !== lastSyncedDocHeight;
       if (!force && !changed) {
         return;
@@ -319,44 +39,34 @@ document.addEventListener("DOMContentLoaded", function () {
   };
   window.__syncLenisAndScrollTrigger = syncLenisAndScrollTrigger;
 
-  // Run multi-pass remeasurement while loader keeps users at the top.
-  [250, 700, 1200, 1700].forEach((delay) => {
-    setTimeout(() => {
-      syncLenisAndScrollTrigger(`pre-loader-hide-${delay}ms`, {
-        force: delay >= 1200,
-      });
-    }, delay);
-  });
-
-  if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => {
-      syncLenisAndScrollTrigger("pre-loader-hide-fonts-ready", {
-        force: true,
-      });
-    });
-  }
-
   // Start Lenis after full page load so initial limits are calculated from settled layout.
   lenis.stop();
-  if (document.readyState === "complete") {
-    pageLoaded = true;
-    maybeStartLenis();
-  } else {
-    window.addEventListener(
-      "load",
-      () => {
-        pageLoaded = true;
-        maybeStartLenis();
-      },
-      { once: true }
-    );
-  }
+  const startLenisAfterLoad = () => {
+    lenis.start();
+    syncLenisAndScrollTrigger("load-start", { force: true });
+    setTimeout(() => {
+      syncLenisAndScrollTrigger("load+500ms");
+    }, 500);
 
-  window.addEventListener("load", () => {
-    if (!canvasControlsLoaderReady) {
-      markLoaderReady();
+    // Catch late layout growth (fonts, async media, component hydration).
+    [1200, 2200, 3500].forEach((delay) => {
+      setTimeout(() => {
+        syncLenisAndScrollTrigger(`post-load-${delay}ms`);
+      }, delay);
+    });
+
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => {
+        syncLenisAndScrollTrigger("fonts-ready");
+      });
     }
-  });
+  };
+
+  if (document.readyState === "complete") {
+    startLenisAfterLoad();
+  } else {
+    window.addEventListener("load", startLenisAfterLoad, { once: true });
+  }
 
   let hasScrolled = false;
 
@@ -378,15 +88,6 @@ document.addEventListener("DOMContentLoaded", function () {
   // RESPONSIVE ANIMATION HELPERS
   // ========================================================
   const mm = gsap.matchMedia();
-  const CANVAS_SCROLL_MULTIPLIER_DESKTOP = 6;
-  const CANVAS_SCROLL_MULTIPLIER_MOBILE = 4;
-  const CANVAS_SCROLL_MOBILE_MAX_WIDTH = 767;
-
-  const getCanvasScrollMultiplier = () => {
-    return window.innerWidth <= CANVAS_SCROLL_MOBILE_MAX_WIDTH
-      ? CANVAS_SCROLL_MULTIPLIER_MOBILE
-      : CANVAS_SCROLL_MULTIPLIER_DESKTOP;
-  };
 
   const mmQueries = {
     "sm-up": "(min-width: 480px)",
@@ -424,7 +125,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // ========================================================
   (function setupCanvasHeroAnimation() {
     const R2_FRAME_BASE_URL =
-      "https://pub-5044a6c9a7e949ceb5c5e1898014171f.r2.dev/humble-hero";
+      "https://pub-2be5e228fbf4428aaf7de80ec0dab76f.r2.dev/humble-hero";
     const LOCAL_FRAME_BASE_URL = "/frames-2";
     const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(
       window.location.hostname
@@ -441,28 +142,17 @@ document.addEventListener("DOMContentLoaded", function () {
 
       const context = canvas.getContext("2d");
       if (!context) return;
-      canvasControlsLoaderReady = true;
-
-      let lastCachedHeight = 0;
-      let lastCachedWidth = 0;
 
       const setCanvasSize = () => {
         const pixelRatio = window.devicePixelRatio || 1;
         const availableWidth = document.documentElement.clientWidth;
         const availableHeight = window.innerHeight * pixelRatio;
+        canvas.width = availableWidth * pixelRatio;
+        canvas.height = availableHeight;
+        canvas.style.width = availableWidth + "px";
+        canvas.style.height = window.innerHeight + "px";
 
-        // Only update if dimensions actually changed
-        if (availableWidth !== lastCachedWidth || availableHeight !== lastCachedHeight) {
-          canvas.width = availableWidth * pixelRatio;
-          canvas.height = availableHeight;
-          canvas.style.width = availableWidth + "px";
-          canvas.style.height = window.innerHeight + "px";
-
-          context.scale(pixelRatio, pixelRatio);
-
-          lastCachedWidth = availableWidth;
-          lastCachedHeight = availableHeight;
-        }
+        context.scale(pixelRatio, pixelRatio);
       };
       setCanvasSize();
 
@@ -536,9 +226,7 @@ document.addEventListener("DOMContentLoaded", function () {
         ScrollTrigger.create({
           trigger: pinWrapper,
           start: "top top",
-          end: () =>
-            `+=${window.innerHeight * getCanvasScrollMultiplier()}px`,
-          invalidateOnRefresh: true,
+          end: `+=${window.innerHeight * 6}px`,
           //  pin: true,
           //  pinSpacing: true,
           scrub: 1,
@@ -554,8 +242,16 @@ document.addEventListener("DOMContentLoaded", function () {
           },
         });
 
-        // Mark loader ready once canvas frames are loaded.
-        markLoaderReady();
+        // Hide loader and show page content
+        const loader = document.getElementById("loader");
+        if (loader) {
+          loader.style.opacity = "0";
+          loader.style.pointerEvents = "none";
+          loader.style.transition = "opacity 0.3s ease-out";
+          setTimeout(() => {
+            loader.style.display = "none";
+          }, 300);
+        }
 
         // Signal to split-text.js that canvas animation is ready
         window.canvasAnimationIsReady = true;
@@ -596,7 +292,6 @@ document.addEventListener("DOMContentLoaded", function () {
         const cardLinks = component.querySelectorAll(
           "[data-gsap-role='card-link']"
         );
-        const fillers = component.querySelectorAll("[data-gsap-role='filler']");
         const triggerEl =
           component.querySelector("[data-gsap-role='trigger']") || component;
 
@@ -613,23 +308,13 @@ document.addEventListener("DOMContentLoaded", function () {
           return;
 
         const totalItems = cardContents.length;
-        const scrollDistancePerZone = 800; // 200px per zone
+        const scrollDistancePerZone = 300; // 200px per zone
         const scrollDistance = totalItems * scrollDistancePerZone; // Total pinSpacing virtual space
         let currentZone = -1; // Start at -1 so first zone (0) always triggers update
         let isSuppressingUpdates = false; // Flag to suppress zone updates during scroll
 
-        const setFillerProgress = (progress) => {
-          const clampedProgress = Math.max(0, Math.min(1, progress));
-          const nextHeight = `${clampedProgress * 100}%`;
-
-          fillers.forEach((filler) => {
-            gsap.set(filler, { height: nextHeight });
-          });
-        };
-
         gsap.set(cardContents, { opacity: 0, willChange: "opacity" });
         gsap.set(cardVisuals, { opacity: 0, willChange: "opacity" });
-        gsap.set(fillers, { height: "0%", willChange: "height" });
 
         // Force first items to be visible immediately
         gsap.set(cardContents[0], { opacity: 1 });
@@ -655,8 +340,6 @@ document.addEventListener("DOMContentLoaded", function () {
           onUpdate: (self) => {
             const progress = self.progress;
 
-            setFillerProgress(progress);
-
             // Skip zone updates if we're in the middle of a click-triggered scroll
             if (isSuppressingUpdates) {
               return;
@@ -675,7 +358,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 const targetOpacity = idx === zone ? 1 : 0;
                 gsap.to(el, {
                   opacity: targetOpacity,
-                  duration: 0.15,
+                  duration: 0.3,
                   ease: "power1.inOut",
                 });
               });
@@ -701,8 +384,6 @@ document.addEventListener("DOMContentLoaded", function () {
             }
           },
         });
-
-        setFillerProgress(st.progress);
 
         // Add click listeners to card links for this component
         cardLinks.forEach((link, idx) => {
@@ -888,59 +569,6 @@ document.addEventListener("DOMContentLoaded", function () {
   (function setupTabAccordionAnimation() {
     const initializedAttr = "data-gsap-tab-accordion-init";
 
-    // Global listener for Swiper events - attach ONCE, outside mmRun guard
-    // so it always listens regardless of media query or component initialization state
-    const handleHomeStatsSwiperChangeGlobal = (event) => {
-      const detail = event.detail || {};
-      const swiperEl = detail.swiperEl;
-      if (!swiperEl) return;
-
-      // Find the matching tab-accordion component for this swiper event
-      const swiperOwner = swiperEl.closest("[data-gsap='tab-accordion']");
-      if (!swiperOwner) {
-        const swiperHomeStatsRoot = swiperEl.closest(".home_stats_main");
-        if (!swiperHomeStatsRoot) return;
-      }
-
-      // Dispatch to all matching components
-      const tabComponents = document.querySelectorAll("[data-gsap='tab-accordion']");
-      tabComponents.forEach((component) => {
-        const componentEl = component;
-        const componentVisuals = componentEl.querySelectorAll("[data-gsap-role='visual']");
-        if (!componentVisuals.length) return;
-
-        const componentHomeStatsRoot = componentEl.closest(".home_stats_main");
-
-        // Check if this component owns the swiper
-        if (swiperOwner && swiperOwner === componentEl) {
-          // Direct match
-        } else if (componentHomeStatsRoot && swiperHomeStatsRoot && componentHomeStatsRoot === swiperHomeStatsRoot) {
-          // Same home_stats_main container
-        } else if (componentEl.contains(swiperEl)) {
-          // Swiper is inside component
-        } else {
-          return; // Skip - doesn't own this swiper
-        }
-
-        const rawIndex = Number.parseInt(`${detail.realIndex ?? ""}`, 10);
-        if (!Number.isFinite(rawIndex)) return;
-
-        const zone = Math.max(0, Math.min(componentVisuals.length - 1, rawIndex));
-        
-        // Update this component's visuals
-        componentVisuals.forEach((visual, index) => {
-          gsap.to(visual, {
-            opacity: index === zone ? 1 : 0,
-            duration: 0.3,
-            ease: "power1.out",
-            overwrite: "auto",
-          });
-        });
-      });
-    };
-
-    window.addEventListener("homeStatsSwiperChange", handleHomeStatsSwiperChangeGlobal);
-
     const initTabAccordionAnimation = () => {
       const tabComponents = document.querySelectorAll(
         "[data-gsap='tab-accordion']"
@@ -969,45 +597,18 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
           }
 
-          const tabVisuals = component.querySelectorAll(
-            "[data-gsap-role='visual']"
-          );
-          console.log("[tab-accordion] visual selector:", "[data-gsap-role='visual']", "count:", tabVisuals.length);
-          const homeStatsSwiperEl = component.querySelector(
-            ".swiper.is-home-stats"
-          );
-          if (!homeStatsSwiperEl) {
-            console.log(
-              "[tab-accordion] swiper element not found inside component"
-            );
-          }
-
-          const componentHomeStatsRoot = component.closest(".home_stats_main");
-
           const totalItems = tabItems.length;
-          const scrollDistancePerZone = 800;
+          const scrollDistancePerZone = 300;
           const scrollDistance = totalItems * scrollDistancePerZone;
           let currentZone = -1;
-          let boundSwiperInstance = null;
-          let swiperBindRetryTimer = null;
-          let swiperBindRetries = 0;
-          const MAX_SWIPER_BIND_RETRIES = 40;
-          const SWIPER_BIND_RETRY_MS = 250;
 
           const scrollTriggerElement = component.matches(
-            "[data-gsap-role='trigger']"
+            "[data-gsap-role='tab-scroll-trigger']"
           )
             ? component
-            : component.querySelector("[data-gsap-role='trigger']") ||
-              component;
-
-          const triggerOffsetAttr = component.getAttribute(
-            "data-gsap-trigger-offset"
-          );
-          const triggerOffsetUnits = Number.parseFloat(triggerOffsetAttr);
-          const triggerStart = Number.isFinite(triggerOffsetUnits)
-            ? `${triggerOffsetUnits * 16}px top`
-            : "top top";
+            : component.querySelector(
+                "[data-gsap-role='tab-scroll-trigger']"
+              ) || component;
 
           const setTabClosedState = (tabItem) => {
             const tabTitle = tabItem.querySelector(
@@ -1159,129 +760,6 @@ document.addEventListener("DOMContentLoaded", function () {
             });
           };
 
-          const setVisualZone = (zone, immediate = false) => {
-            if (!tabVisuals.length) return;
-
-            tabVisuals.forEach((visual, index) => {
-              const animationMethod = immediate ? gsap.set : gsap.to;
-              animationMethod(visual, {
-                opacity: index === zone ? 1 : 0,
-                duration: 0.3,
-                ease: "power1.out",
-                overwrite: "auto",
-              });
-            });
-          };
-
-          const getActiveSwiperSlideIndex = () => {
-            if (!homeStatsSwiperEl || !tabVisuals.length) return null;
-            if (homeStatsSwiperEl.offsetParent === null) return null;
-
-            const activeSlide = homeStatsSwiperEl.querySelector(
-              ".swiper-slide-active[data-swiper-slide-index]"
-            );
-            if (!activeSlide) return null;
-
-            const indexAttr = activeSlide.getAttribute(
-              "data-swiper-slide-index"
-            );
-            const parsed = Number.parseInt(indexAttr || "", 10);
-            if (!Number.isFinite(parsed)) return null;
-
-            return Math.max(0, Math.min(tabVisuals.length - 1, parsed));
-          };
-
-          const syncVisualsFromCurrentMode = (immediate = false) => {
-            const swiperZone = getActiveSwiperSlideIndex();
-            if (swiperZone !== null) {
-              console.log("[tab-accordion] mode=swiper activeIndex=", swiperZone);
-              setVisualZone(swiperZone, immediate);
-              return;
-            }
-
-            const fallbackZone = currentZone >= 0 ? currentZone : 0;
-            console.log("[tab-accordion] mode=accordion zone=", fallbackZone);
-            setVisualZone(fallbackZone, immediate);
-          };
-
-          const handleSwiperVisualSyncEvent = (eventName) => {
-            const activeIndex = getActiveSwiperSlideIndex();
-            console.log(
-              "[tab-accordion] swiper event:",
-              eventName,
-              "activeIndex:",
-              activeIndex
-            );
-            syncVisualsFromCurrentMode(false);
-          };
-
-          const bindSwiperVisualSync = () => {
-            const swiperInstance = homeStatsSwiperEl?.swiper;
-            if (!swiperInstance) {
-              console.log("[tab-accordion] swiper instance not ready yet");
-              return false;
-            }
-            if (swiperInstance === boundSwiperInstance) return true;
-
-            if (boundSwiperInstance) {
-              boundSwiperInstance.off("init", boundSwiperInstance.__tabAccordionOnInit);
-              boundSwiperInstance.off(
-                "slideChange",
-                boundSwiperInstance.__tabAccordionOnSlideChange
-              );
-              boundSwiperInstance.off(
-                "transitionEnd",
-                boundSwiperInstance.__tabAccordionOnTransitionEnd
-              );
-            }
-
-            boundSwiperInstance = swiperInstance;
-            boundSwiperInstance.__tabAccordionOnInit = () =>
-              handleSwiperVisualSyncEvent("init");
-            boundSwiperInstance.__tabAccordionOnSlideChange = () =>
-              handleSwiperVisualSyncEvent("slideChange");
-            boundSwiperInstance.__tabAccordionOnTransitionEnd = () =>
-              handleSwiperVisualSyncEvent("transitionEnd");
-
-            boundSwiperInstance.on(
-              "init",
-              boundSwiperInstance.__tabAccordionOnInit
-            );
-            boundSwiperInstance.on(
-              "slideChange",
-              boundSwiperInstance.__tabAccordionOnSlideChange
-            );
-            boundSwiperInstance.on(
-              "transitionEnd",
-              boundSwiperInstance.__tabAccordionOnTransitionEnd
-            );
-
-            console.log("[tab-accordion] swiper visual sync bound");
-            syncVisualsFromCurrentMode(true);
-            return true;
-          };
-
-          const startSwiperBindRetries = () => {
-            if (swiperBindRetryTimer || !homeStatsSwiperEl) return;
-
-            swiperBindRetries = 0;
-            swiperBindRetryTimer = setInterval(() => {
-              swiperBindRetries += 1;
-              const bound = bindSwiperVisualSync();
-
-              if (bound || swiperBindRetries >= MAX_SWIPER_BIND_RETRIES) {
-                clearInterval(swiperBindRetryTimer);
-                swiperBindRetryTimer = null;
-
-                if (!bound) {
-                  console.log(
-                    "[tab-accordion] failed to bind swiper visual sync after retries"
-                  );
-                }
-              }
-            }, SWIPER_BIND_RETRY_MS);
-          };
-
           const setZone = (zone, immediate = false) => {
             if (zone === currentZone) return;
 
@@ -1295,33 +773,17 @@ document.addEventListener("DOMContentLoaded", function () {
             if (tabItems[zone]) {
               openTab(tabItems[zone], immediate);
             }
-
-            setVisualZone(zone, immediate);
           };
 
           tabItems.forEach((item) => {
             setTabClosedState(item);
           });
 
-          if (tabVisuals.length) {
-            gsap.set(tabVisuals, { opacity: 0, willChange: "opacity" });
-          }
-
           setZone(0, true);
-          bindSwiperVisualSync();
-          setTimeout(bindSwiperVisualSync, 0);
-          setTimeout(bindSwiperVisualSync, 300);
-          startSwiperBindRetries();
-
-          const handleResize = () => {
-            bindSwiperVisualSync();
-            syncVisualsFromCurrentMode(true);
-          };
-          window.addEventListener("resize", handleResize);
 
           const st = ScrollTrigger.create({
             trigger: scrollTriggerElement,
-            start: triggerStart,
+            start: "top top",
             end: `+=${scrollDistance}px`,
             pin: true,
             pinSpacing: true,
@@ -1335,31 +797,6 @@ document.addEventListener("DOMContentLoaded", function () {
           });
 
           componentCleanups.push(() => st.kill());
-
-          componentCleanups.push(() => {
-            window.removeEventListener("resize", handleResize);
-
-            if (swiperBindRetryTimer) {
-              clearInterval(swiperBindRetryTimer);
-              swiperBindRetryTimer = null;
-            }
-
-            if (boundSwiperInstance) {
-              boundSwiperInstance.off("init", boundSwiperInstance.__tabAccordionOnInit);
-              boundSwiperInstance.off(
-                "slideChange",
-                boundSwiperInstance.__tabAccordionOnSlideChange
-              );
-              boundSwiperInstance.off(
-                "transitionEnd",
-                boundSwiperInstance.__tabAccordionOnTransitionEnd
-              );
-              delete boundSwiperInstance.__tabAccordionOnInit;
-              delete boundSwiperInstance.__tabAccordionOnSlideChange;
-              delete boundSwiperInstance.__tabAccordionOnTransitionEnd;
-              boundSwiperInstance = null;
-            }
-          });
 
           componentCleanups.push(() => {
             tabItems.forEach((item) => {
@@ -1382,12 +819,6 @@ document.addEventListener("DOMContentLoaded", function () {
               tabTitle?.removeAttribute("style");
               tabContent?.removeAttribute("style");
             });
-
-            tabVisuals.forEach((visual) => {
-              gsap.killTweensOf(visual);
-              visual.removeAttribute("style");
-            });
-
             component.removeAttribute(initializedAttr);
           });
           return () => componentCleanups.forEach((fn) => fn());
@@ -1404,9 +835,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // ASSETS SCROLL ANIMATION (slot-based scrub)
   // ========================================================
   (function setupAssetsScrollAnimation() {
-    const components = document.querySelectorAll(
-      "[data-gsap ='assets-scroll']"
-    );
+    const components = document.querySelectorAll("[assets-scroll-animation]");
     if (!components.length) return;
     const fadeDelayProgress = 0.02;
 
@@ -1422,47 +851,17 @@ document.addEventListener("DOMContentLoaded", function () {
 
     components.forEach((component) => {
       mmRun(component, () => {
-        const triggerEl = component.matches("[data-gsap-role='trigger']")
+        const triggerEl = component.matches("[gsap-trigger]")
           ? component
-          : component.querySelector("[data-gsap-role='trigger']");
+          : component.querySelector("[gsap-trigger]");
 
         if (!triggerEl) return;
 
         const entries = [];
-        const items = component.querySelectorAll("[data-gsap-asset-item]");
-        const visuals = Array.from(
-          component.querySelectorAll("[data-gsap-asset-visual]")
-        );
-        const visualsBySlot = new Map();
-        let activeVisualSlot = null;
-
-        visuals.forEach((visual) => {
-          const slot = visual.getAttribute("data-gsap-asset-visual");
-          if (!slot) return;
-          visualsBySlot.set(slot, visual);
-          gsap.set(visual, {
-            opacity: 0,
-            willChange: "opacity",
-          });
-        });
-
-        const setActiveVisualSlot = (slot) => {
-          if (slot === activeVisualSlot) return;
-          activeVisualSlot = slot;
-
-          visualsBySlot.forEach((visual, visualSlot) => {
-            const isActive = slot !== null && visualSlot === slot;
-            gsap.to(visual, {
-              opacity: isActive ? 1 : 0,
-              duration: isActive ? 0.35 : 0.25,
-              ease: "power1.out",
-              overwrite: "auto",
-            });
-          });
-        };
+        const items = component.querySelectorAll("[asset-item]");
 
         items.forEach((item) => {
-          const slot = item.getAttribute("data-gsap-asset-item");
+          const slot = item.getAttribute("asset-item");
           const range = assetItemProgress[slot];
           if (!range || range.end <= range.start) return;
 
@@ -1482,7 +881,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
           entries.push({
             item,
-            slot,
             start: range.start,
             end: range.end,
             fadeStart: Math.min(1, range.end + fadeDelayProgress),
@@ -1502,7 +900,6 @@ document.addEventListener("DOMContentLoaded", function () {
           invalidateOnRefresh: true,
           onUpdate: (self) => {
             const globalProgress = clamp01(self.progress);
-            let nextVisualSlot = null;
 
             entries.forEach((entry) => {
               if (globalProgress < entry.start) {
@@ -1537,8 +934,6 @@ document.addEventListener("DOMContentLoaded", function () {
                 return;
               }
 
-              nextVisualSlot = entry.slot;
-
               if (entry.fadeTween) entry.fadeTween.kill();
               entry.fadeTween = null;
               entry.state = "inside";
@@ -1548,13 +943,10 @@ document.addEventListener("DOMContentLoaded", function () {
               );
               entry.tl.progress(localProgress);
             });
-
-            setActiveVisualSlot(nextVisualSlot);
           },
         });
 
         const initialGlobalProgress = clamp01(st.progress);
-        let initialVisualSlot = null;
         entries.forEach((entry) => {
           if (initialGlobalProgress < entry.start) {
             entry.state = "before";
@@ -1577,8 +969,6 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
           }
 
-          initialVisualSlot = entry.slot;
-
           entry.state = "inside";
 
           const localProgress = clamp01(
@@ -1586,8 +976,6 @@ document.addEventListener("DOMContentLoaded", function () {
           );
           entry.tl.progress(localProgress);
         });
-
-        setActiveVisualSlot(initialVisualSlot);
       }); // end mmRun
     });
   })();
@@ -1764,64 +1152,6 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // ========================================================
-// Navbar Auto Hide On Scroll
-// ========================================================
-
-document.addEventListener("DOMContentLoaded", () => {
-  const navBars = document.querySelectorAll("[nav-bar]");
-  if (!navBars.length) return;
-
-  navBars.forEach((navBar) => {
-    navBar.style.willChange = "transform";
-    navBar.style.transition = "transform 0.35s ease";
-
-    let lastScrollY = window.scrollY;
-    let ticking = false;
-    let isHidden = false;
-    const SCROLL_DELTA_THRESHOLD = 6;
-    const TOP_REVEAL_OFFSET = 10;
-
-    const showNav = () => {
-      if (!isHidden) return;
-      navBar.style.transform = "translateY(0)";
-      isHidden = false;
-    };
-
-    const hideNav = () => {
-      if (isHidden) return;
-      navBar.style.transform = "translateY(-100%)";
-      isHidden = true;
-    };
-
-    const updateNavState = () => {
-      const currentScrollY = window.scrollY;
-      const delta = currentScrollY - lastScrollY;
-
-      if (currentScrollY <= TOP_REVEAL_OFFSET) {
-        showNav();
-      } else if (delta > SCROLL_DELTA_THRESHOLD) {
-        hideNav();
-      } else if (delta < -SCROLL_DELTA_THRESHOLD) {
-        showNav();
-      }
-
-      lastScrollY = currentScrollY;
-      ticking = false;
-    };
-
-    window.addEventListener(
-      "scroll",
-      () => {
-        if (ticking) return;
-        ticking = true;
-        requestAnimationFrame(updateNavState);
-      },
-      { passive: true }
-    );
-  });
-});
-
-// ========================================================
 // LATE SCROLL TRIGGER REFRESH
 // Fires after load and once the browser goes idle to
 // ensure all ScrollTrigger measurements are correct after
@@ -1850,25 +1180,4 @@ window.addEventListener("load", function () {
       window.dispatchEvent(new Event("resize"));
     });
   }
-});
-
-document.addEventListener("DOMContentLoaded", () => {
-  const visuals = Array.from(document.querySelectorAll("[technology-visual]"));
-  if (!visuals.length) return;
-
-  let currentIndex = 0;
-  const showTime = 4000;
-
-  function setActive(index) {
-    visuals.forEach((item, i) => {
-      item.classList.toggle("active", index === i);
-    });
-  }
-
-  setActive(currentIndex);
-
-  setInterval(() => {
-    currentIndex = (currentIndex + 1) % visuals.length;
-    setActive(currentIndex);
-  }, showTime);
 });
