@@ -215,7 +215,11 @@ document.addEventListener("DOMContentLoaded", function () {
   };
 
   const runPreReleaseSyncThenHideLoader = (label) => {
-    if (loaderPreReleaseSyncScheduled || loaderReleaseFinalized || loaderHidden) {
+    if (
+      loaderPreReleaseSyncScheduled ||
+      loaderReleaseFinalized ||
+      loaderHidden
+    ) {
       return;
     }
 
@@ -424,7 +428,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // ========================================================
   (function setupCanvasHeroAnimation() {
     const R2_FRAME_BASE_URL =
-      "https://pub-5044a6c9a7e949ceb5c5e1898014171f.r2.dev/humble-hero";
+      "https://pub-5044a6c9a7e949ceb5c5e1898014171f.r2.dev/humble-hero-compressed";
     const LOCAL_FRAME_BASE_URL = "/frames-2";
     const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(
       window.location.hostname
@@ -452,7 +456,10 @@ document.addEventListener("DOMContentLoaded", function () {
         const availableHeight = window.innerHeight * pixelRatio;
 
         // Only update if dimensions actually changed
-        if (availableWidth !== lastCachedWidth || availableHeight !== lastCachedHeight) {
+        if (
+          availableWidth !== lastCachedWidth ||
+          availableHeight !== lastCachedHeight
+        ) {
           canvas.width = availableWidth * pixelRatio;
           canvas.height = availableHeight;
           canvas.style.width = availableWidth + "px";
@@ -466,7 +473,8 @@ document.addEventListener("DOMContentLoaded", function () {
       };
       setCanvasSize();
 
-      const frameCount = 313;
+      // const frameCount = 313;
+      const frameCount = 299;
       const currentFrame = (index) => {
         return `${FRAME_BASE_URL}/HUMBLE_TEASER_${(index + 1)
           .toString()
@@ -536,8 +544,7 @@ document.addEventListener("DOMContentLoaded", function () {
         ScrollTrigger.create({
           trigger: pinWrapper,
           start: "top top",
-          end: () =>
-            `+=${window.innerHeight * getCanvasScrollMultiplier()}px`,
+          end: () => `+=${window.innerHeight * getCanvasScrollMultiplier()}px`,
           invalidateOnRefresh: true,
           //  pin: true,
           //  pinSpacing: true,
@@ -618,6 +625,53 @@ document.addEventListener("DOMContentLoaded", function () {
         let currentZone = -1; // Start at -1 so first zone (0) always triggers update
         let isSuppressingUpdates = false; // Flag to suppress zone updates during scroll
 
+        const getLottieContainerFromVisual = (visualEl) => {
+          if (!visualEl) return null;
+          if (visualEl.matches("[lottie-item]")) return visualEl;
+          return visualEl.querySelector("[lottie-item]");
+        };
+
+        const getLottieInstanceForContainer = (container) => {
+          if (!container) return null;
+          if (container.__gsapCardLottieInstance) {
+            return container.__gsapCardLottieInstance;
+          }
+
+          const lottieApi = window.lottie || window.bodymovin;
+          if (!lottieApi || typeof lottieApi.getRegisteredAnimations !== "function") {
+            return null;
+          }
+
+          const registered = lottieApi.getRegisteredAnimations();
+          const match = registered.find((animationItem) => {
+            const wrapper = animationItem?.wrapper;
+            if (!wrapper) return false;
+            return wrapper === container || container.contains(wrapper);
+          });
+
+          if (match) {
+            container.__gsapCardLottieInstance = match;
+          }
+
+          return match || null;
+        };
+
+        const replayActiveCardLottie = (zone) => {
+          const activeVisual = cardVisuals[zone];
+          const lottieContainer = getLottieContainerFromVisual(activeVisual);
+          if (!lottieContainer) return;
+
+          const lottieInstance = getLottieInstanceForContainer(lottieContainer);
+          if (!lottieInstance) return;
+
+          try {
+            lottieInstance.stop();
+            lottieInstance.goToAndPlay(0, true);
+          } catch (error) {
+            console.error("Failed to replay card lottie", error);
+          }
+        };
+
         const setFillerProgress = (progress) => {
           const clampedProgress = Math.max(0, Math.min(1, progress));
           const nextHeight = `${clampedProgress * 100}%`;
@@ -643,6 +697,8 @@ document.addEventListener("DOMContentLoaded", function () {
             link.classList.remove("active");
           }
         });
+
+        replayActiveCardLottie(0);
 
         // Create ScrollTrigger for this carousel component
         const st = ScrollTrigger.create({
@@ -698,6 +754,8 @@ document.addEventListener("DOMContentLoaded", function () {
                   link.classList.remove("active");
                 }
               });
+
+              replayActiveCardLottie(zone);
             }
           },
         });
@@ -760,6 +818,8 @@ document.addEventListener("DOMContentLoaded", function () {
                 link.classList.remove("active");
               }
             });
+
+            replayActiveCardLottie(targetZone);
           });
         });
       }); // end mmRun
@@ -903,10 +963,14 @@ document.addEventListener("DOMContentLoaded", function () {
       }
 
       // Dispatch to all matching components
-      const tabComponents = document.querySelectorAll("[data-gsap='tab-accordion']");
+      const tabComponents = document.querySelectorAll(
+        "[data-gsap='tab-accordion']"
+      );
       tabComponents.forEach((component) => {
         const componentEl = component;
-        const componentVisuals = componentEl.querySelectorAll("[data-gsap-role='visual']");
+        const componentVisuals = componentEl.querySelectorAll(
+          "[data-gsap-role='visual']"
+        );
         if (!componentVisuals.length) return;
 
         const componentHomeStatsRoot = componentEl.closest(".home_stats_main");
@@ -914,7 +978,11 @@ document.addEventListener("DOMContentLoaded", function () {
         // Check if this component owns the swiper
         if (swiperOwner && swiperOwner === componentEl) {
           // Direct match
-        } else if (componentHomeStatsRoot && swiperHomeStatsRoot && componentHomeStatsRoot === swiperHomeStatsRoot) {
+        } else if (
+          componentHomeStatsRoot &&
+          swiperHomeStatsRoot &&
+          componentHomeStatsRoot === swiperHomeStatsRoot
+        ) {
           // Same home_stats_main container
         } else if (componentEl.contains(swiperEl)) {
           // Swiper is inside component
@@ -925,8 +993,11 @@ document.addEventListener("DOMContentLoaded", function () {
         const rawIndex = Number.parseInt(`${detail.realIndex ?? ""}`, 10);
         if (!Number.isFinite(rawIndex)) return;
 
-        const zone = Math.max(0, Math.min(componentVisuals.length - 1, rawIndex));
-        
+        const zone = Math.max(
+          0,
+          Math.min(componentVisuals.length - 1, rawIndex)
+        );
+
         // Update this component's visuals
         componentVisuals.forEach((visual, index) => {
           gsap.to(visual, {
@@ -939,7 +1010,10 @@ document.addEventListener("DOMContentLoaded", function () {
       });
     };
 
-    window.addEventListener("homeStatsSwiperChange", handleHomeStatsSwiperChangeGlobal);
+    window.addEventListener(
+      "homeStatsSwiperChange",
+      handleHomeStatsSwiperChangeGlobal
+    );
 
     const initTabAccordionAnimation = () => {
       const tabComponents = document.querySelectorAll(
@@ -972,7 +1046,12 @@ document.addEventListener("DOMContentLoaded", function () {
           const tabVisuals = component.querySelectorAll(
             "[data-gsap-role='visual']"
           );
-          console.log("[tab-accordion] visual selector:", "[data-gsap-role='visual']", "count:", tabVisuals.length);
+          console.log(
+            "[tab-accordion] visual selector:",
+            "[data-gsap-role='visual']",
+            "count:",
+            tabVisuals.length
+          );
           const homeStatsSwiperEl = component.querySelector(
             ".swiper.is-home-stats"
           );
@@ -1194,7 +1273,10 @@ document.addEventListener("DOMContentLoaded", function () {
           const syncVisualsFromCurrentMode = (immediate = false) => {
             const swiperZone = getActiveSwiperSlideIndex();
             if (swiperZone !== null) {
-              console.log("[tab-accordion] mode=swiper activeIndex=", swiperZone);
+              console.log(
+                "[tab-accordion] mode=swiper activeIndex=",
+                swiperZone
+              );
               setVisualZone(swiperZone, immediate);
               return;
             }
@@ -1224,7 +1306,10 @@ document.addEventListener("DOMContentLoaded", function () {
             if (swiperInstance === boundSwiperInstance) return true;
 
             if (boundSwiperInstance) {
-              boundSwiperInstance.off("init", boundSwiperInstance.__tabAccordionOnInit);
+              boundSwiperInstance.off(
+                "init",
+                boundSwiperInstance.__tabAccordionOnInit
+              );
               boundSwiperInstance.off(
                 "slideChange",
                 boundSwiperInstance.__tabAccordionOnSlideChange
@@ -1345,7 +1430,10 @@ document.addEventListener("DOMContentLoaded", function () {
             }
 
             if (boundSwiperInstance) {
-              boundSwiperInstance.off("init", boundSwiperInstance.__tabAccordionOnInit);
+              boundSwiperInstance.off(
+                "init",
+                boundSwiperInstance.__tabAccordionOnInit
+              );
               boundSwiperInstance.off(
                 "slideChange",
                 boundSwiperInstance.__tabAccordionOnSlideChange
@@ -1604,10 +1692,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let observedHeightSyncTimer = null;
 
   const scheduleObservedHeightSync = (label, options = {}) => {
-    const {
-      force = false,
-      delay = HEIGHT_OBSERVER_DEBOUNCE_MS,
-    } = options;
+    const { force = false, delay = HEIGHT_OBSERVER_DEBOUNCE_MS } = options;
 
     if (observedHeightSyncTimer) {
       clearTimeout(observedHeightSyncTimer);
