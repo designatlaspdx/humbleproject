@@ -2091,3 +2091,64 @@ document.addEventListener("DOMContentLoaded", () => {
     setActive(currentIndex);
   }, showTime);
 });
+
+// ========================================================
+// LOTTIE ANIMATION INIT
+// ========================================================
+
+
+document.addEventListener("DOMContentLoaded", () => {
+  const lottieApi = window.lottie || window.bodymovin;
+  if (!lottieApi || typeof lottieApi.loadAnimation !== "function") return;
+
+  const parseBooleanAttr = (value, fallback) => {
+    if (value == null || value === "") return fallback;
+    const normalized = `${value}`.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no") {
+      return false;
+    }
+    return fallback;
+  };
+
+  const normalizeAssetsPath = (value) => {
+    if (!value) return "";
+    return value.endsWith("/") ? value : `${value}/`;
+  };
+
+  document.querySelectorAll("[lottie-item]").forEach((el) => {
+    const jsonPath = el.dataset.lottieJson || el.dataset.src;
+    if (!jsonPath) {
+      console.warn("[lottie-item] missing data-lottie-json (or legacy data-src)", el);
+      return;
+    }
+
+    const assetsPath = normalizeAssetsPath(el.dataset.lottieAssetsPath || "");
+    const renderer = el.dataset.lottieRenderer || "svg";
+    const shouldLoop = parseBooleanAttr(el.dataset.lottieLoop, true);
+    const shouldAutoplay = parseBooleanAttr(el.dataset.lottieAutoplay, true);
+
+    const instance = lottieApi.loadAnimation({
+      container: el,
+      renderer,
+      loop: shouldLoop,
+      autoplay: shouldAutoplay,
+      path: jsonPath,
+      ...(assetsPath ? { assetsPath } : {}),
+      rendererSettings: {
+        preserveAspectRatio: "xMidYMid slice",
+        filterSize: {
+          width: "200%",
+          height: "200%",
+          x: "-50%",
+          y: "-50%",
+        },
+      },
+    });
+
+    // Cache reference for GSAP card-zone replay hooks.
+    el.__gsapCardLottieInstance = instance;
+  });
+});
