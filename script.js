@@ -3,8 +3,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const lenis = new Lenis();
 
-  const LOADER_MIN_VISIBLE_MS = 2000;
-  const LOADER_MAX_WAIT_MS = 4500;
+  const LOADER_MIN_VISIBLE_MS = 3000;
+  const LOADER_MAX_WAIT_MS = 5500;
   const LOADER_HIDE_ANIMATION_MS = 700;
   const LOADER_STABILITY_WINDOW_MS = 500;
   const LOADER_STABILITY_RECHECK_MS = 80;
@@ -21,6 +21,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let lenisStarted = false;
   let hasRunPostLoadLenisSync = false;
   let keepTopRafId = null;
+  const loaderOffRequested = Boolean(document.querySelector("[loader-off]"));
 
   // Public loader readiness signal for other scripts on this page load.
   window.loaderIsReady = false;
@@ -118,6 +119,11 @@ document.addEventListener("DOMContentLoaded", function () {
     document.body.scrollTop = 0;
   };
 
+  const snapToTopWithoutLock = () => {
+    forceScrollTop();
+    lenis.scrollTo(0, { immediate: true, force: true });
+  };
+
   const startLenisAfterLoad = () => {
     syncLenisAndScrollTrigger("load-start", { force: true });
     setTimeout(() => {
@@ -157,15 +163,87 @@ document.addEventListener("DOMContentLoaded", function () {
     window.history.scrollRestoration = "manual";
   }
 
-  forceScrollTop();
-  lenis.scrollTo(0, { immediate: true, force: true });
-  bindLoaderTopLock();
-  requestAnimationFrame(forceScrollTop);
-  window.addEventListener("load", forceScrollTop, { once: true });
+  if (loaderOffRequested) {
+    const loader = document.querySelector("[data-loader], #loader");
+    if (loader) {
+      loader.style.display = "none";
+      loader.style.opacity = "0";
+      loader.style.pointerEvents = "none";
+    }
+
+    // Non-blocking top reset sequence for pages that skip the loader UI.
+    snapToTopWithoutLock();
+    requestAnimationFrame(() => {
+      snapToTopWithoutLock();
+    });
+    window.addEventListener(
+      "load",
+      () => {
+        snapToTopWithoutLock();
+        requestAnimationFrame(() => {
+          snapToTopWithoutLock();
+        });
+      },
+      { once: true }
+    );
+
+    loaderHidden = true;
+    loaderReleaseFinalized = true;
+    window.loaderIsReady = true;
+
+    try {
+      window.dispatchEvent(new CustomEvent("loaderReady"));
+    } catch (err) {
+      console.error("loaderReady listener failed", err);
+    }
+  }
+
+  if (!loaderOffRequested) {
+    forceScrollTop();
+    lenis.scrollTo(0, { immediate: true, force: true });
+    bindLoaderTopLock();
+    requestAnimationFrame(forceScrollTop);
+    window.addEventListener("load", forceScrollTop, { once: true });
+  }
+
+  const finalizeLoaderReleaseWithoutElement = () => {
+    if (loaderReleaseFinalized) return;
+    loaderReleaseFinalized = true;
+    loaderHidden = true;
+
+    if (loaderStabilityTimer) {
+      clearTimeout(loaderStabilityTimer);
+      loaderStabilityTimer = null;
+    }
+    if (loaderMinWaitTimer) {
+      clearTimeout(loaderMinWaitTimer);
+      loaderMinWaitTimer = null;
+    }
+
+    unbindLoaderTopLock();
+
+    try {
+      maybeStartLenis();
+    } catch (err) {
+      console.error("Failed to start Lenis after loader release", err);
+    }
+
+    window.loaderIsReady = true;
+
+    try {
+      window.dispatchEvent(new CustomEvent("loaderReady"));
+    } catch (err) {
+      console.error("loaderReady listener failed", err);
+    }
+  };
 
   const hideLoader = () => {
     const loader = document.querySelector("[data-loader], #loader");
-    if (!loader || loader.dataset.hiding === "true") return;
+    if (!loader) {
+      finalizeLoaderReleaseWithoutElement();
+      return;
+    }
+    if (loader.dataset.hiding === "true") return;
 
     // Ensure we are at top before beginning loader hide animation.
     forceScrollTop();
@@ -236,7 +314,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const tryHideLoader = () => {
     const loader = document.querySelector("[data-loader], #loader");
-    if (!loader || loader.dataset.hiding === "true") return;
+    if (!loader) {
+      finalizeLoaderReleaseWithoutElement();
+      return;
+    }
+    if (loader.dataset.hiding === "true") return;
+
+    if (loaderOffRequested) {
+      runPreReleaseSyncThenHideLoader("pre-release-loader-off");
+      return;
+    }
 
     const elapsed = performance.now() - loaderShownAt;
     const minDurationMet = elapsed >= LOADER_MIN_VISIBLE_MS;
@@ -272,9 +359,12 @@ document.addEventListener("DOMContentLoaded", function () {
     tryHideLoader();
   };
 
-  setTimeout(() => {
-    markLoaderReady();
-  }, LOADER_MAX_WAIT_MS);
+  setTimeout(
+    () => {
+      markLoaderReady();
+    },
+    loaderOffRequested ? 0 : LOADER_MAX_WAIT_MS
+  );
 
   const getDocHeight = () => {
     const doc = document.documentElement;
@@ -1937,8 +2027,23 @@ document.addEventListener("DOMContentLoaded", () => {
 // Navbar
 // ========================================================
 
+const NAVBAR_SELECTOR = "[navbar], [nav-bar], .navbar";
+
+const getNavbarElements = () => {
+  const seen = new Set();
+  const elements = [];
+
+  document.querySelectorAll(NAVBAR_SELECTOR).forEach((el) => {
+    if (seen.has(el)) return;
+    seen.add(el);
+    elements.push(el);
+  });
+
+  return elements;
+};
+
 document.addEventListener("DOMContentLoaded", () => {
-  const navbar = document.querySelector("[navbar]");
+  const [navbar] = getNavbarElements();
   const hamburgerContent = document.querySelector("[hamburger-content]");
   const navbarHamburgerButton = document.querySelector(
     "[navbar-hamburger-button]"
@@ -1953,6 +2058,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     hamburgerContent.classList.toggle("is-open", webflowIsOpen);
     navbar.classList.toggle("is-open", webflowIsOpen);
+
+    // Never keep a transform on nav while the fullscreen menu is open.
+    // A transformed ancestor can offset fixed descendants like [hamburger-content].
+    if (webflowIsOpen) {
+      navbar.style.transform = "";
+    }
   };
 
   // Initial sync in case Webflow initializes classes just after DOMContentLoaded.
@@ -1987,7 +2098,7 @@ document.addEventListener("DOMContentLoaded", () => {
 // ========================================================
 
 document.addEventListener("DOMContentLoaded", () => {
-  const navBars = document.querySelectorAll("[nav-bar]");
+  const navBars = getNavbarElements();
   if (!navBars.length) return;
 
   navBars.forEach((navBar) => {
@@ -2002,7 +2113,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const showNav = () => {
       if (!isHidden) return;
-      navBar.style.transform = "translateY(0)";
+      navBar.style.transform = "";
       isHidden = false;
     };
 
@@ -2013,6 +2124,19 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const updateNavState = () => {
+      const menuIsOpen =
+        navBar.classList.contains("is-open") ||
+        navBar.classList.contains("w--open");
+
+      // Keep nav anchored while menu is open so fixed overlay stays viewport-bound.
+      if (menuIsOpen) {
+        navBar.style.transform = "";
+        isHidden = false;
+        lastScrollY = window.scrollY;
+        ticking = false;
+        return;
+      }
+
       const currentScrollY = window.scrollY;
       const delta = currentScrollY - lastScrollY;
 

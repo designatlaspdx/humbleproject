@@ -1,3 +1,5 @@
+
+/** Swiper for Home Outro  ***/
 document.addEventListener("DOMContentLoaded", function () {
   const homeComponentEl = document.querySelector("[swiper-home]");
   if (!homeComponentEl) return;
@@ -62,6 +64,10 @@ document.addEventListener("DOMContentLoaded", function () {
       : {}),
   });
 });
+
+
+
+/** Swiper for Careers Page */
 
 document.addEventListener("DOMContentLoaded", function () {
   const careersComponentEl = document.querySelector("[swiper-careers]");
@@ -132,6 +138,9 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 
+
+
+//** Swiper for Home States on Mobile  ***/
 document.addEventListener("DOMContentLoaded", function () {
   const homeStatsComponentEl = document.querySelector("[swiper-home-stats]");
   if (!homeStatsComponentEl) return;
