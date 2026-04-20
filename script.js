@@ -4,7 +4,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const lenis = new Lenis();
 
   const LOADER_MIN_VISIBLE_MS = 3000;
-  const LOADER_MAX_WAIT_MS = 5500;
+  const LOADER_MAX_WAIT_MS = 7000;
   const LOADER_HIDE_ANIMATION_MS = 700;
   const LOADER_STABILITY_WINDOW_MS = 500;
   const LOADER_STABILITY_RECHECK_MS = 80;
