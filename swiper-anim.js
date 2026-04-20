@@ -8,7 +8,7 @@ document.addEventListener("DOMContentLoaded", function () {
   if (!homeSwiperEl) return;
 
   const homePaginationEl =
-    homeComponentEl.querySelector(".swiper-pagination.is-home") ||
+    homeComponentEl.querySelector(".home_swiper_custom-pagination") ||
     homeComponentEl.querySelector(".swiper-pagination");
   const homeNextEl =
     homeComponentEl.querySelector(".swiper-button-next.is-home") ||
@@ -39,8 +39,8 @@ document.addEventListener("DOMContentLoaded", function () {
           pagination: {
             el: homePaginationEl,
             clickable: true,
-            bulletClass: "swiper-pagination-bullet",
-            bulletActiveClass: "swiper-pagination-bullet-active",
+            bulletClass: "home_swiper_custom-bullet",
+            bulletActiveClass: "home_swiper_custom-bullet-active",
           },
         }
       : {}),
