@@ -152,7 +152,6 @@ document.addEventListener("DOMContentLoaded", () => {
   (function setupCardsGrow() {
     const elements = document.querySelectorAll("[cards-grow]");
     if (!elements.length) return;
-    console.log('cards-grow found');
     if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined")
       return;
 
@@ -161,9 +160,9 @@ document.addEventListener("DOMContentLoaded", () => {
     elements.forEach((el) => {
       gsap.fromTo(
         el,
-        { y: 0 },
+        { y: 0, scale: 1 },
         {
-          y: -150,
+          y: -200,
           scale: 1.1,
           ease: "none",
           scrollTrigger: {

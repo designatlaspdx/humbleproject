@@ -518,7 +518,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // ========================================================
   (function setupCanvasHeroAnimation() {
     const R2_FRAME_BASE_URL =
-      "https://pub-5044a6c9a7e949ceb5c5e1898014171f.r2.dev/humble-hero-compressed";
+      "https://pub-5044a6c9a7e949ceb5c5e1898014171f.r2.dev/humble-video-april-20";
     const LOCAL_FRAME_BASE_URL = "/frames-2";
     const isLocalHost = ["localhost", "127.0.0.1", "::1"].includes(
       window.location.hostname
@@ -564,11 +564,11 @@ document.addEventListener("DOMContentLoaded", function () {
       setCanvasSize();
 
       // const frameCount = 313;
-      const frameCount = 299;
+      const frameCount = 298;
       const currentFrame = (index) => {
-        return `${FRAME_BASE_URL}/HUMBLE_TEASER_${(index + 1)
+        return `${FRAME_BASE_URL}/HUMBLE_WEB_01_HERO_HEADER_v02_${(index + 100)
           .toString()
-          .padStart(8, "0")}.jpg`;
+          .padStart(5, "0")}.jpg`;
       };
 
       let images = [];
