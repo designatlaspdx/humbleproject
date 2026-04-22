@@ -176,6 +176,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const range = WRAPPER_PROGRESS[slot];
     if (!range || range.end <= range.start) return null;
 
+    const usePreloadEffect =
+      target.hasAttribute("hero-text-effect") &&
+      target.getAttribute("hero-text-effect") === "preload";
+
+    // Force a deterministic base state so stale inline styles can't flash content on refresh.
+    gsap.set(target, { autoAlpha: usePreloadEffect ? 1 : 0 });
+
     const split = new SplitText(target, {
       type: "words,chars",
       wordsClass: "split-word",
@@ -236,10 +243,6 @@ document.addEventListener("DOMContentLoaded", () => {
         charEl.style.backgroundPosition = `${-offsetX}px 0px`;
       });
     });
-
-    // Check if this text should use preload effect (visible → disappear) instead of normal (hidden → visible → disappear)
-    const usePreloadEffect = target.hasAttribute("hero-text-effect") && 
-                             target.getAttribute("hero-text-effect") === "preload";
 
     if (usePreloadEffect) {
       // Preload mode: start with chars fully visible, then fade out
@@ -329,6 +332,7 @@ document.addEventListener("DOMContentLoaded", () => {
       start: range.start,
       end: range.end,
       revealed: false,
+      usePreloadEffect,
       tl,
     };
   }
@@ -336,8 +340,23 @@ document.addEventListener("DOMContentLoaded", () => {
   function revealEntry(entry) {
     if (entry.revealed) return;
     entry.revealed = true;
-    entry.target.style.visibility = "visible";
-    entry.target.style.opacity = "1";
+    gsap.set(entry.target, { autoAlpha: 1 });
+  }
+
+  function hideEntry(entry) {
+    if (!entry.revealed) return;
+    entry.revealed = false;
+    gsap.set(entry.target, { autoAlpha: 0 });
+  }
+
+  function shouldShowEntry(entry, localProgress) {
+    if (entry.usePreloadEffect) {
+      // Preload copy starts visible at top, then is hidden once its fade-out segment completes.
+      return localProgress < 1;
+    }
+
+    // Normal copy should only be visible while its slot is active (between start and end).
+    return localProgress > 0 && localProgress < 1;
   }
 
   function initSplitText() {
@@ -354,6 +373,11 @@ document.addEventListener("DOMContentLoaded", () => {
       const entries = [];
 
       targets.forEach((target) => {
+        const usePreloadEffect =
+          target.hasAttribute("hero-text-effect") &&
+          target.getAttribute("hero-text-effect") === "preload";
+        gsap.set(target, { autoAlpha: usePreloadEffect ? 1 : 0 });
+
         const entry = buildTarget(target);
         if (entry) entries.push(entry);
       });
@@ -380,7 +404,11 @@ document.addEventListener("DOMContentLoaded", () => {
             const localProgress = clamp01(
               (globalProgress - entry.start) / (entry.end - entry.start)
             );
-            if (localProgress > 0) revealEntry(entry);
+            if (shouldShowEntry(entry, localProgress)) {
+              revealEntry(entry);
+            } else {
+              hideEntry(entry);
+            }
             entry.tl.progress(localProgress);
           });
         },
@@ -395,7 +423,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const localProgress = clamp01(
           (initialGlobalProgress - entry.start) / (entry.end - entry.start)
         );
-        if (localProgress > 0) revealEntry(entry);
+        if (shouldShowEntry(entry, localProgress)) {
+          revealEntry(entry);
+        } else {
+          hideEntry(entry);
+        }
         entry.tl.progress(localProgress);
       });
     });
@@ -699,7 +731,33 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Handle browser back/forward cache (bfcache) restoration
+  let isSplitTextInitialized = false;
+
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+      // Page was restored from bfcache - clean up old instances and reinitialize
+      cleanupSplitText();
+      isSplitTextInitialized = false;
+      initSplitText();
+      // Reinitialize line animation if needed
+      lineAnimationInitialized = false;
+      tryInitLineAnimation();
+    } else if (!isSplitTextInitialized) {
+      // Normal page load
+      isSplitTextInitialized = true;
+    }
+  });
+
+  window.addEventListener("pagehide", (event) => {
+    if (event.persisted) {
+      // Page is entering bfcache - ensure cleanup to free memory
+      cleanupSplitText();
+    }
+  });
+
   window.addEventListener("beforeunload", cleanupSplitText);
+  isSplitTextInitialized = true;
   initSplitText();
 
   // Wait for canvas animation to be fully loaded before initializing second animation
